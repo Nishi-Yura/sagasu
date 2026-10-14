@@ -1,69 +1,136 @@
-# Sagasu (探す)
+<div align="center">
 
-「名前でも、中身でも、すぐ見つかる。散らかったフォルダは、AIが片付け案を出す。」
+<img src="docs/icon.png" width="112" alt="Sagasu のアイコン" />
 
-Windows 向けのファイル検索ランチャーです。ファイル名だけでなく、Word / Excel / PowerPoint / PDF / テキストファイルの中身も検索できます。散らかったフォルダは、AI が整理案を出してくれます。
+# Sagasu（さがす）
 
-![Sagasu のスクリーンショット](docs/screenshot.png)
+**名前でも、中身でも、すぐ見つかる。**<br>
+**散らかったフォルダは、プレビューしてから安全に片付く。**
 
-## 概要
+[![Windows 10 | 11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)](#-ダウンロードとインストール)
+[![Version](https://img.shields.io/badge/version-0.1.0-2563eb)](CHANGELOG.md)
+[![Built with Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app/)
+[![Rust](https://img.shields.io/badge/Rust-stable-CE422B?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-16a34a)](LICENSE)
 
-- 対象: Windows 10 / 11
-- 技術: Tauri v2 + Rust（バックエンド）、HTML / JavaScript（フロントエンド、`ui/`）
-- ライセンス: MIT
+[ダウンロード](#-ダウンロードとインストール) ・
+[使い方](#-使い方) ・
+[整理機能](#-フォルダを整理する) ・
+[よくある質問](#-よくある質問) ・
+[詳しいガイド](docs/USAGE.md)
 
-## 機能
+<br>
 
-- **ファイル名の即時検索**: 検索する場所（既定はユーザーフォルダ。ドライブ単位でも追加可）を約10万件でも数十ミリ秒で検索。ひらがな / カタカナ、全角 / 半角、ローマ字からの入力にも対応したあいまい検索
-- **中身の全文検索**: Word / Excel / PowerPoint / PDF / テキストファイルの本文を検索
-- **絞り込み**: `ext:pdf` や `in:フォルダ名` などの検索構文、日付・サイズ指定
-- **自然文検索（任意）**: Claude を使った自然文での検索（Anthropic API キーが必要）
-- **グローバルホットキー**: 既定は `Alt+Space`（設定で変更可能）でランチャーを呼び出し
-- **ピン留め・エイリアス**: 「経理」のような短い別名を入力すると、対応フォルダへ直接移動
-- **検索場所の追加**: OneDrive、NAS、外付けドライブを検索対象に追加可能
-- **AI 整理**: 「種類別に整理して」のように指示し、移動前後の計画をプレビュー → 承認 → 実行
-- **ルールプリセット**: 種類別、年月別などの整理ルールを AI なしで利用可能
-- **取り消し履歴**: 整理操作はすべて元に戻せる
-- **重複ファイル検出**: 中身がまったく同じファイルを探し、不要なコピーをごみ箱へ（ごみ箱から戻せます）
-- **プレビュー**: 選んだファイルの中身（一致した箇所の周辺）やフォルダの中身をその場で表示
-- **タスクトレイ常駐・自動起動**: ウィンドウを閉じても常駐し、Windows 起動時に自動で立ち上げることも可能
-- **安全設計**: ファイルは削除しません（移動のみ）。同名ファイルは上書きせずリネームします。`C:\Windows`、`Program Files`、`AppData` などのシステムフォルダは整理対象外です。
+<img src="docs/screenshot-search.png" width="760" alt="「見積」で検索した画面。ファイル名と中身の両方から見つかり、右側に中身のプレビューが表示されている" />
 
-## インストール
+</div>
 
-1. [Releases](https://github.com/Nishi-Yura/sagasu/releases) から最新の `Sagasu_x.y.z_x64-setup.exe` をダウンロードします。
-2. インストーラーを実行します。
-3. 署名されていないアプリのため、Windows SmartScreen の警告が表示される場合があります。その場合は「**詳細情報**」→「**実行**」を選択してください。
+<br>
 
-## 使い方
+## 💡 こんなとき、ありませんか？
 
-### 基本操作
+| 😣 困りごと | ✨ Sagasu なら |
+| --- | --- |
+| **名前は覚えているのに、どこに保存したか忘れた** | 名前の一部を打つだけで、パソコン中から一瞬で候補が出ます |
+| **名前は覚えていないけど、中身は覚えている** | Word・Excel・PowerPoint・PDF の **本文** まで探せます。文章で聞ける「AIで探す」も |
+| **深い階層や OneDrive・NAS の、行きにくいフォルダ** | 「経理」など短い **あだ名** を付ければ、打つだけで一番上に出ます |
+| **ダウンロードやデスクトップが散らかっている** | 「種類別」などを選ぶか、AI に指示するだけで整理案を作成。**確認してから** 実行できます |
 
-- `Alt+Space`（既定値）でランチャーを開きます。
-- 検索語を入力すると、結果がリアルタイムに表示されます。
-- 別名（例: 「経理」）を入力すると、登録したフォルダに直接移動できます。
+<br>
 
-### 検索構文
+## 🌟 主な機能
 
-| 構文 | 意味 | 例 |
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### 🔍 すぐ見つかる検索
+- 約10万件でも **数十ミリ秒** で表示
+- ひらがな・カタカナ・全角・半角・ローマ字の違いを気にせず検索
+- 少しの打ち間違いも拾う **あいまい検索**
+- よく開くファイルほど上に表示
+
+</td>
+<td width="50%" valign="top">
+
+### 📄 中身まで探せる
+- Word / Excel / PowerPoint / PDF / テキストの本文を検索
+- 一致した部分をハイライトしてプレビュー
+- Shift_JIS の古いテキストにも対応
+- ファイルの追加・変更は自動で反映
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+### 🗂️ 安全に片付く整理
+- 種類別・年/月別・年別・拡張子別をワンクリック
+- AI に「請求書は取引先ごとに」などと指示も可能
+- **移動前にプレビュー**、ファイル単位で外せる
+- いつでも **元に戻せる** 履歴つき
+
+</td>
+<td valign="top">
+
+### ⚡ いつでも呼び出せる
+- `Alt+Space` でどの画面からでも表示
+- タスクトレイに常駐、Windows 起動時の自動起動
+- ピン留め・あだ名で行きにくい場所へ直行
+- 重複ファイルを見つけて、ごみ箱へ
+
+</td>
+</tr>
+</table>
+
+<br>
+
+## 📥 ダウンロードとインストール
+
+1. [**Releases**](https://github.com/Nishi-Yura/sagasu/releases) から最新の **`Sagasu_x.y.z_x64-setup.exe`** をダウンロード
+2. ダウンロードしたファイルをダブルクリックしてインストール（管理者権限は不要です）
+3. 起動するとファイルの一覧づくりが始まります。数十秒〜数分で検索できるようになります
+
+> [!NOTE]
+> Sagasu は電子署名をしていないため、初回に「Windows によって PC が保護されました」と表示されることがあります。
+> その場合は **「詳細情報」→「実行」** を押してください。
+
+| 動作環境 | |
+| --- | --- |
+| OS | Windows 10 / 11（64bit） |
+| 必要なもの | Microsoft Edge WebView2（Windows 11 には標準で入っています） |
+| AI 機能 | 任意。使う場合のみ Anthropic の APIキーが必要です |
+
+<br>
+
+## 🚀 使い方
+
+### 1. 呼び出して、打つ
+
+`Alt+Space` を押して検索欄に入力するだけ。結果は打つたびに更新されます。
+
+### 2. 言葉を組み合わせて絞り込む
+
+| 書き方 | 意味 | 例 |
 | --- | --- | --- |
-| `ext:拡張子` | 拡張子で絞り込み | `ext:pdf` |
-| `in:フォルダ名` | フォルダ名で絞り込み | `in:経理` |
-| `after:日付` | 指定日以降 | `after:2026-01-01` |
-| `before:日付` | 指定日以前 | `before:2026-06-30` |
-| `size>サイズ` / `size<サイズ` | サイズで絞り込み | `size>10mb` |
+| 言葉を並べる | すべてを含むものを探す（フォルダ名も対象） | `経理 請求書` |
+| `今日` `昨日` `今週` `先週` `今月` `先月` `今年` `去年` `最近` | 更新した時期 | `見積 先月` |
+| `画像` `写真` `動画` `音楽` `エクセル` `パワポ` | ファイルの種類 | `旅行 写真` |
+| `ext:拡張子` | 拡張子で絞る（カンマで複数） | `ext:pdf,docx` |
+| `in:フォルダ名` | 場所で絞る | `in:ダウンロード` |
+| `after:日付` / `before:日付` | 日付で絞る | `after:2026-04-01` |
+| `size>サイズ` / `size<サイズ` | 大きさで絞る | `size>100mb` |
 | `type:folder` / `type:file` | フォルダだけ / ファイルだけ | `経理 type:folder` |
-| 日付語 | 相対的な期間 | `今週` `先月` `去年` |
-| 種類語 | ファイルの種類 | `画像` `写真` `動画` `エクセル` `パワポ` `PDF` |
 
-日付語は 今日 / 昨日 / 一昨日 / 今週 / 先週 / 今月 / 先月 / 今年 / 去年 / 最近（2週間）に対応しています。
-組み合わせ例: `請求書 先月 PDF in:経理`
+> [!TIP]
+> 名前を思い出せないときは、右上の **「AIで探す」**（`Ctrl+I`）に切り替えて
+> 「去年の夏の旅行の写真」「先月の引っ越しの見積もりPDF」のように **文章で** 入力してください。
 
-### キーボード操作
+### 3. キーボードだけで操作する
 
 | キー | 動作 |
 | --- | --- |
-| `Alt+Space`（変更可） | どこからでも Sagasu を呼び出す / 隠す |
+| `Alt+Space`（変更可） | Sagasu を呼び出す / 隠す |
 | `↑` `↓` | 結果を選ぶ |
 | `Enter` | 開く |
 | `Ctrl+Enter` | 保存場所をエクスプローラーで開く |
@@ -72,72 +139,134 @@ Windows 向けのファイル検索ランチャーです。ファイル名だけ
 | `Ctrl+1`〜`5` | 検索 / 整理 / ピン留め / 履歴 / 設定 |
 | `Esc` | 入力を消す・ウィンドウを隠す |
 
-結果を右クリックすると「ピン留めに追加」「このフォルダを整理」などのメニューが出ます。ウィンドウを閉じてもタスクトレイに常駐し、呼び出しキーで再表示できます。
+結果を **右クリック** すると「ピン留めに追加」「このフォルダを整理」などのメニューが出ます。
 
-### ピン留め・エイリアス
+<br>
 
-よく使うフォルダはピン留めできます。エイリアスを設定すると、短い言葉で素早くフォルダを開けます。
+## 🧹 フォルダを整理する
 
-### AI で整理する
+<div align="center">
+<img src="docs/screenshot-organize.png" width="760" alt="ダウンロードフォルダを種類別に整理する前のプレビュー。画像・インストーラー・PDF などのフォルダに分かれる予定が表示されている" />
+</div>
 
-1. 整理したいフォルダを指定し、指示を入力します（例: 「種類別に整理して」「年月ごとにまとめて」）。
-2. 移動前後の計画がプレビューに表示されます。内容を確認します。
-3. 承認すると、ファイルが移動されます。
+1. **整理するフォルダを選ぶ**（「ダウンロード」「デスクトップ」はボタン一つ）
+2. **整理のしかたを選ぶ**
+   - 🏷️ プリセット：種類別 / 年/月別 / 年別 / 拡張子別（AI 不要・無料）
+   - 🤖 AI に指示：「請求書と見積書は取引先ごとに、写真は年別に」など
+3. **プレビューを確認** して「この内容で整理する」。不要な移動はチェックを外せます
+4. 気に入らなければ **「履歴」→「元に戻す」** で元通り
 
-AI を使わず、種類別や年月別のルールプリセットで整理することもできます。
+> [!IMPORTANT]
+> **Sagasu はファイルを削除しません。** 整理は「移動」だけで、同じ名前のファイルがあっても上書きせず `名前 (2).pdf` のように名前を変えます。
+> `C:\Windows`・`Program Files`・`AppData`、ドライブ直下、ユーザーフォルダ直下は整理できないようにしています。
 
-### 取り消し
+<br>
 
-整理操作の履歴は保存されており、「取り消し」で元の状態に戻せます。
+## 🤖 AI 機能（任意）
 
-## AI 機能の設定
+AI 機能は **使わなくても** 検索・プリセット整理・重複検出はすべて使えます。
 
-AI による自然文検索と整理提案には Anthropic API キーが必要です。AI 機能は任意で、使わなくても検索と整理（ルールプリセット）は利用できます。
+1. [Anthropic Console](https://console.anthropic.com/) で APIキーを発行
+2. Sagasu の **「設定」→「AI（Claude）」** に貼り付けて「保存」→「接続テスト」
 
-1. [https://console.anthropic.com/](https://console.anthropic.com/) で API キーを取得します。
-2. Sagasu の「設定」を開き、API キーを貼り付けます。
+| 機能 | AI に送るもの | 送らないもの |
+| --- | --- | --- |
+| AIで探す | 入力した文章だけ | ファイル名・ファイルの中身 |
+| AI 整理 | 対象フォルダ内のファイル名・場所・日付・サイズ | ファイルの中身 |
 
-API キーは Windows 資格情報マネージャー（Windows Credential Manager）に保存されます。
+- モデルは Claude Opus 5.5（既定）/ Sonnet 5.5 / Haiku 5.5 から選べます
+- 利用料は Anthropic の API 料金として、APIキーの持ち主に請求されます
+- APIキーは Windows の資格情報マネージャーに保存されます
 
-## プライバシー
+<br>
 
-- 検索インデックスは、ローカルの `%APPDATA%\jp.sagasu.app` に保存されます。
-- AI 機能を使う場合のみ、ファイル名とメタデータが AI に送信されます。ファイルの中身は送信されません。
-- API キーは Windows 資格情報マネージャーに保存されます。
+## 🔒 プライバシーと安全
 
-## ソースからビルド
+- 🏠 検索用の一覧（インデックス）は **パソコンの中だけ**（`%APPDATA%\jp.sagasu.app`）に保存
+- ☁️ OneDrive の「オンラインのみ」のファイルは、勝手にダウンロードしないよう中身を読みません
+- 🗑️ ファイルを削除しません。重複ファイルの片付けも **ごみ箱へ移動**（ごみ箱から戻せます）
+- 📡 AI 機能を使ったとき以外、インターネットに接続しません
 
-1. Rust（stable、MSVC ツールチェーン）をインストールします。
-2. Tauri CLI をインストールします。
+<br>
 
-   ```powershell
-   cargo install tauri-cli --version "^2" --locked
-   ```
+## ❓ よくある質問
 
-3. `src-tauri` ディレクトリで実行します。
+<details>
+<summary><b>Alt+Space が効きません</b></summary>
 
-   ```powershell
-   cd src-tauri
-   cargo tauri dev     # 開発実行
-   cargo tauri build   # リリースビルド
-   ```
+他のアプリ（PowerToys Run など）が同じキーを使っていると登録できません。
+「設定」→「呼び出しキー」をクリックして、`Ctrl+Alt+Space` など別の組み合わせを押してから保存してください。
 
-インストーラーは `src-tauri/target/release/bundle/{nsis,msi}` に出力されます。
+</details>
 
-## ライセンス
+<details>
+<summary><b>探したいファイルが出てきません</b></summary>
 
-MIT License. Copyright (c) 2026 Nishi-Yura. 詳しくは [LICENSE](LICENSE) を参照してください。
+- 「設定」→「検索する場所」に、そのファイルがあるフォルダやドライブ（例: `D:\`）が入っているか確認してください
+- `.` で始まるフォルダや隠しファイルは既定で対象外です。「隠しファイル・システムファイルも検索する」で含められます
+- 中身の検索は、起動直後しばらくは解析中です（画面下に進み具合が表示されます）
+
+</details>
+
+<details>
+<summary><b>漢字の読みで探せますか？（「けいり」で「経理」）</b></summary>
+
+いまは対応していません。ひらがな⇔カタカナ、全角⇔半角、ローマ字⇔かなの違いは吸収します。
+名前の読みしか思い出せないときは「AIで探す」を試してください。
+
+</details>
+
+<details>
+<summary><b>アンインストールしたい</b></summary>
+
+Windows の「設定」→「アプリ」→「インストールされているアプリ」から Sagasu をアンインストールしてください。
+検索用のデータも消したいときは `%APPDATA%\jp.sagasu.app` フォルダを削除してください。
+
+</details>
+
+<br>
+
+## 🛠️ ソースからビルド
+
+```powershell
+# 1. Rust（stable / MSVC）を用意して、Tauri CLI を入れる
+cargo install tauri-cli --version "^2" --locked
+
+# 2. 開発用に起動
+cd src-tauri
+cargo tauri dev
+
+# 3. インストーラーを作る（target/release/bundle/nsis と msi に出力）
+cargo tauri build
+
+# テスト
+cargo test
+```
+
+| フォルダ | 中身 |
+| --- | --- |
+| `src-tauri/src` | Rust のバックエンド（検索インデックス・全文抽出・整理・AI 連携） |
+| `ui` | 画面（HTML / CSS / JavaScript、ビルド不要） |
+| `docs` | 使い方ガイドと画像 |
+
+<br>
+
+## 📜 ライセンス
+
+[MIT License](LICENSE) © 2026 Nishi-Yura
 
 ---
 
-## English
+<details>
+<summary><b>English</b></summary>
 
-**Sagasu (探す)** is a file search launcher for Windows 10/11. It searches file names instantly across drives (fuzzy matching for hiragana/katakana, full/half width, and romaji input), and also searches the contents of Word, Excel, PowerPoint, PDF, and text files. For cluttered folders, an optional AI feature proposes an organization plan that you preview before anything is moved.
+**Sagasu** is a file search launcher for Windows 10/11.
 
-- **Hotkey**: `Alt+Space` by default (configurable) opens the launcher.
-- **Filters**: `ext:pdf`, `in:folder`, `after:2026-01-01`, `before:...`, `size>10mb`, and date words such as 今週 or 先月.
-- **AI (optional)**: natural-language search and organize suggestions. Requires an Anthropic API key from https://console.anthropic.com/, entered in 設定. Only file names and metadata are sent to the AI, and only when you use AI features. The key is stored in Windows Credential Manager.
-- **Safety**: files are never deleted, only moved; duplicates are renamed, never overwritten; system folders (C:\Windows, Program Files, AppData) are never organized; all organize operations can be undone.
-- **Install**: download `Sagasu_x.y.z_x64-setup.exe` from [Releases](https://github.com/Nishi-Yura/sagasu/releases). The installer is unsigned, so SmartScreen may warn you; choose 「詳細情報」→「実行」 to continue.
-- **Build from source**: install Rust (stable, MSVC), run `cargo install tauri-cli --version "^2" --locked`, then in `src-tauri` run `cargo tauri dev` or `cargo tauri build`.
-- **License**: MIT. Copyright (c) 2026 Nishi-Yura.
+- **Instant name search** across your folders (~100k files in tens of milliseconds), tolerant of hiragana/katakana, full/half width, romaji and small typos.
+- **Full-text search** inside Word, Excel, PowerPoint, PDF and text files, with highlighted previews.
+- **Safe organizing**: presets (by type, year/month, year, extension) or an instruction to Claude; every plan is previewed first, nothing is ever deleted, collisions are renamed, and every run can be undone.
+- **Hotkey** `Alt+Space`, tray icon, pins/aliases, duplicate finder (moves copies to the Recycle Bin).
+- **AI is optional.** Natural-language search sends only the typed sentence; AI organize sends file names, paths, dates and sizes — never file contents. Requires an Anthropic API key.
+- **Install**: download `Sagasu_x.y.z_x64-setup.exe` from [Releases](https://github.com/Nishi-Yura/sagasu/releases). The installer is unsigned; on the SmartScreen prompt choose "More info" → "Run anyway".
+
+</details>

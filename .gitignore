@@ -19,3 +19,6 @@ desktop.ini
 
 # Node (not used by the build, but ignored in case tooling adds it)
 node_modules/
+
+# Local release artifacts (uploaded to GitHub Releases, not committed)
+release/
