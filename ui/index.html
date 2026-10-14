@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sagasu</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="searchbar" id="searchbar">
+      <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg>
+      <input id="q" type="text" autocomplete="off" spellcheck="false"
+             placeholder="ファイル名・中身で検索（例: 見積 ext:pdf 先月）" aria-label="検索" />
+      <button id="ai-toggle" class="ai-toggle" type="button" title="文章で探す（AI）  Ctrl+I" aria-pressed="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>
+        <span>AIで探す</span>
+      </button>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button class="tab active" data-view="search" role="tab">検索</button>
+      <button class="tab" data-view="organize" role="tab">整理</button>
+      <button class="tab" data-view="pins" role="tab">ピン留め</button>
+      <button class="tab" data-view="history" role="tab">履歴</button>
+      <button class="tab" data-view="settings" role="tab">設定</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- 検索 -->
+    <section class="view active" id="view-search">
+      <div class="split">
+        <div class="results" id="results" tabindex="-1"></div>
+        <aside class="preview" id="preview"><div class="empty-note">ファイルを選ぶと中身をここに表示します</div></aside>
+      </div>
+    </section>
+
+    <!-- 整理 -->
+    <section class="view" id="view-organize">
+      <div class="page">
+        <h2>フォルダを整理する</h2>
+        <p class="lead">プレビューを確認してから実行します。ファイルは削除されず、いつでも元に戻せます。</p>
+
+        <div class="card">
+          <div class="step-title"><span class="step">1</span>整理するフォルダ</div>
+          <div class="row">
+            <input id="org-root" type="text" placeholder="例: C:\Users\you\Downloads" spellcheck="false" />
+            <button id="org-pick" class="btn">選ぶ…</button>
+          </div>
+          <div class="quick" id="org-quick"></div>
+          <label class="check"><input type="checkbox" id="org-recursive" /> サブフォルダの中のファイルも対象にする</label>
+          <div id="org-summary" class="summary"></div>
+        </div>
+
+        <div class="card">
+          <div class="step-title"><span class="step">2</span>整理のしかた</div>
+          <div class="presets">
+            <button class="btn preset" data-preset="by_type">種類別<small>画像・PDF・文書…</small></button>
+            <button class="btn preset" data-preset="by_year_month">年/月別<small>2026\10 …</small></button>
+            <button class="btn preset" data-preset="by_year">年別<small>2025・2026 …</small></button>
+            <button class="btn preset" data-preset="by_extension">拡張子別<small>PDF・XLSX …</small></button>
+          </div>
+          <div class="ai-box">
+            <textarea id="org-instruction" rows="2" placeholder="AIへの指示（例: 請求書と見積書を取引先ごとに分けて、写真は年別にして）"></textarea>
+            <button id="org-ai" class="btn primary">AIに整理案を作ってもらう</button>
+          </div>
+        </div>
+
+        <div class="card" id="org-plan-card" hidden>
+          <div class="step-title"><span class="step">3</span>整理案のプレビュー</div>
+          <div id="org-plan"></div>
+          <div class="actions">
+            <button id="org-cancel" class="btn">やめる</button>
+            <button id="org-apply" class="btn primary">この内容で整理する</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="step-title">重複ファイルを探す</div>
+          <p class="hint">中身がまったく同じファイルを探します。上のフォルダが空なら、検索する場所すべてが対象です。不要なコピーは「ごみ箱へ」で移動できます（ごみ箱から戻せます）。</p>
+          <div class="row">
+            <span>対象にする最小サイズ</span>
+            <input id="dup-min" type="number" min="0" step="0.5" value="1" class="w-num" /> MB
+            <button id="dup-run" class="btn">重複を探す</button>
+          </div>
+          <div id="dup-result"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ピン留め -->
+    <section class="view" id="view-pins">
+      <div class="page">
+        <h2>ピン留め・あだ名</h2>
+        <p class="lead">よく行く場所に短いあだ名を付けると、検索欄にあだ名を打つだけで一番上に出ます。</p>
+        <div class="card">
+          <div class="row">
+            <input id="pin-alias" type="text" placeholder="あだ名（例: 経理）" class="w-alias" />
+            <input id="pin-path" type="text" placeholder="フォルダまたはファイルの場所" spellcheck="false" />
+            <button id="pin-pick" class="btn">選ぶ…</button>
+            <button id="pin-add" class="btn primary">追加</button>
+          </div>
+        </div>
+        <div id="pin-list" class="list"></div>
+      </div>
+    </section>
+
+    <!-- 履歴 -->
+    <section class="view" id="view-history">
+      <div class="page">
+        <h2>整理の履歴</h2>
+        <p class="lead">実行した整理はここから元に戻せます。</p>
+        <div id="history-list" class="list"></div>
+      </div>
+    </section>
+
+    <!-- 設定 -->
+    <section class="view" id="view-settings">
+      <div class="page">
+        <h2>設定</h2>
+
+        <div class="card">
+          <div class="step-title">検索する場所</div>
+          <div id="roots" class="chips-list"></div>
+          <div class="row">
+            <button id="root-add" class="btn">場所を追加…</button>
+            <span class="hint">OneDrive・NAS・外付けドライブ（例: D:\）も追加できます</span>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="step-title">除外する場所</div>
+          <textarea id="excludes" rows="6" spellcheck="false"></textarea>
+          <div class="hint">1行に1つ。フォルダ名（例: node_modules）または場所（例: C:\Windows）</div>
+          <label class="check"><input type="checkbox" id="show-hidden" /> 隠しファイル・システムファイルも検索する</label>
+        </div>
+
+        <div class="card">
+          <div class="step-title">中身の検索</div>
+          <label class="check"><input type="checkbox" id="content-enabled" /> Word・Excel・PowerPoint・PDF・テキストの中身を検索できるようにする</label>
+          <div class="row">
+            <span>対象にする最大サイズ</span>
+            <input id="content-max" type="number" min="1" max="500" class="w-num" /> MB
+          </div>
+          <div class="hint">OneDrive の「オンラインのみ」のファイルはダウンロードを避けるため中身を読みません。</div>
+        </div>
+
+        <div class="card">
+          <div class="step-title">呼び出しと起動</div>
+          <div class="row">
+            <span>呼び出しキー</span>
+            <input id="hotkey" type="text" class="w-key" readonly placeholder="クリックしてキーを押す" />
+            <button id="hotkey-reset" class="btn">Alt+Space に戻す</button>
+          </div>
+          <label class="check"><input type="checkbox" id="autostart" /> Windows の起動時に Sagasu を起動する（タスクトレイに常駐）</label>
+        </div>
+
+        <div class="card">
+          <div class="step-title">AI（Claude）</div>
+          <p class="hint">「AIで探す」と「AI整理」に使います。送るのはファイル名・場所・日付・サイズだけで、ファイルの中身は送りません。</p>
+          <div class="row">
+            <input id="api-key" type="password" placeholder="Anthropic APIキー（sk-ant-…）" spellcheck="false" autocomplete="off" />
+            <button id="api-save" class="btn">保存</button>
+            <button id="api-test" class="btn">接続テスト</button>
+          </div>
+          <div id="api-state" class="hint"></div>
+          <div class="row">
+            <span>モデル</span>
+            <select id="model">
+              <option value="claude-opus-5-5">Claude Opus 5.5（高精度・おすすめ）</option>
+              <option value="claude-sonnet-5-5">Claude Sonnet 5.5（速い・安い）</option>
+              <option value="claude-haiku-5-5">Claude Haiku 5.5（最速・最安）</option>
+            </select>
+          </div>
+          <div class="hint">APIキーは <a href="#" data-href="https://console.anthropic.com/">console.anthropic.com</a> で発行できます。キーは Windows の資格情報マネージャーに保存されます。</div>
+        </div>
+
+        <div class="actions sticky">
+          <span id="settings-version" class="hint"></span>
+          <button id="rescan" class="btn">インデックスを作り直す</button>
+          <button id="settings-save" class="btn primary">設定を保存</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="statusbar">
+    <span id="status">準備中…</span>
+    <span class="keys"><kbd>Enter</kbd> 開く <kbd>Ctrl</kbd>+<kbd>Enter</kbd> 場所を開く <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> パスをコピー <kbd>Esc</kbd> 閉じる</span>
+  </footer>
+
+  <div id="menu" class="menu" hidden></div>
+  <div id="toast" class="toast" hidden></div>
+  <div id="modal" class="modal" hidden>
+    <div class="modal-box">
+      <div id="modal-text"></div>
+      <div class="actions">
+        <button id="modal-no" class="btn">キャンセル</button>
+        <button id="modal-yes" class="btn primary">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

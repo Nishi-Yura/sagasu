@@ -1,0 +1,500 @@
+//! Tauri commands called from the UI. Errors are returned as Japanese messages.
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use serde::Serialize;
+use tauri::{AppHandle, Manager, State};
+
+use crate::ai::{self, AiSearch};
+use crate::db::{HistoryItem, Pin};
+use crate::engine::{Engine, StatusView};
+use crate::index::Hit;
+use crate::normalize::normalize;
+use crate::organize::{self, Plan, Preset};
+use crate::query::{self, Filter, Kind};
+use crate::settings::{self, Settings};
+
+type Res<T> = Result<T, String>;
+type Eng<'a> = State<'a, Arc<Engine>>;
+
+fn err(e: impl std::fmt::Display) -> String {
+    e.to_string()
+}
+
+async fn blocking<T: Send + 'static>(f: impl FnOnce() -> anyhow::Result<T> + Send + 'static) -> Res<T> {
+    tauri::async_runtime::spawn_blocking(f).await.map_err(err)?.map_err(err)
+}
+
+#[derive(Serialize)]
+pub struct PinHit {
+    pub alias: String,
+    pub path: String,
+    pub exists: bool,
+}
+
+#[derive(Serialize)]
+pub struct SearchResult {
+    pub pins: Vec<PinHit>,
+    pub items: Vec<Hit>,
+    pub total: usize,
+    pub took_ms: u64,
+    pub has_terms: bool,
+}
+
+#[derive(Serialize)]
+pub struct ContentResult {
+    pub path: String,
+    pub snippet: String,
+    pub hit: Option<Hit>,
+}
+
+fn now() -> i64 {
+    chrono::Utc::now().timestamp()
+}
+
+#[tauri::command]
+pub async fn search(engine: Eng<'_>, query: String, limit: Option<usize>) -> Res<SearchResult> {
+    let t = std::time::Instant::now();
+    let f = query::parse(&query);
+    let q = normalize(query.trim());
+    let pins = if q.is_empty() {
+        vec![]
+    } else {
+        engine
+            .db
+            .pins()
+            .map_err(err)?
+            .into_iter()
+            .filter(|p| {
+                let a = normalize(&p.alias);
+                a.starts_with(&q) || (q.chars().count() >= 2 && a.contains(&q))
+            })
+            .map(|p| PinHit { exists: Path::new(&p.path).exists(), alias: p.alias, path: p.path })
+            .collect()
+    };
+    if f.is_empty() {
+        return Ok(SearchResult { pins, items: vec![], total: 0, took_ms: 0, has_terms: false });
+    }
+    let opens = engine.opens.read().clone();
+    let (items, total) = engine.index.read().search(&f, limit.unwrap_or(150), &opens, now());
+    Ok(SearchResult { pins, items, total, took_ms: t.elapsed().as_millis() as u64, has_terms: f.has_terms() })
+}
+
+fn content_results(engine: &Engine, terms: &[String], f: &Filter, limit: usize) -> anyhow::Result<Vec<ContentResult>> {
+    let hits = engine.db.search_content(terms, limit * 3)?;
+    let ix = engine.index.read();
+    let mut out = Vec::new();
+    for h in hits {
+        let hit = ix.hit_for_path(&h.path);
+        if let Some(x) = &hit {
+            let pn = normalize(&x.path);
+            if !f.accepts_meta(&pn, crate::index::ext_of(&normalize(&x.name)), x.size, x.mtime, x.is_dir) {
+                continue;
+            }
+        } else {
+            continue;
+        }
+        out.push(ContentResult { path: h.path, snippet: h.snippet, hit });
+        if out.len() >= limit {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+pub async fn search_content(engine: Eng<'_>, query: String, limit: Option<usize>) -> Res<Vec<ContentResult>> {
+    let f = query::parse(&query);
+    if f.raw_terms.is_empty() {
+        return Ok(vec![]);
+    }
+    let engine = engine.inner().clone();
+    blocking(move || content_results(&engine, &f.raw_terms, &f, limit.unwrap_or(40))).await
+}
+
+#[derive(Serialize)]
+pub struct AiSearchResult {
+    pub parsed: AiSearch,
+    pub items: Vec<Hit>,
+    pub content: Vec<ContentResult>,
+}
+
+fn base_filter(p: &AiSearch) -> Filter {
+    let date = |s: &str| {
+        chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok().and_then(|d| {
+            use chrono::TimeZone;
+            chrono::Local.from_local_datetime(&d.and_hms_opt(0, 0, 0)?).earliest().map(|t| t.timestamp())
+        })
+    };
+    Filter {
+        exts: p.extensions.iter().map(|e| e.trim_start_matches('.').to_lowercase()).collect(),
+        path_contains: p.folder_hints.iter().map(|h| normalize(h)).filter(|h| !h.is_empty()).collect(),
+        after: date(&p.modified_after),
+        before: date(&p.modified_before),
+        kind: match p.kind.as_str() {
+            "file" => Kind::File,
+            "folder" => Kind::Folder,
+            _ => Kind::Any,
+        },
+        ..Default::default()
+    }
+}
+
+#[tauri::command]
+pub async fn ai_search(engine: Eng<'_>, text: String) -> Res<AiSearchResult> {
+    let key = settings::api_key().ok_or("AI検索を使うには、設定で Anthropic の APIキーを登録してください。")?;
+    let model = engine.settings.read().model.clone();
+    let engine = engine.inner().clone();
+    blocking(move || {
+        let parsed = ai::parse_search(&key, &model, &text)?;
+        let base = base_filter(&parsed);
+        let opens = engine.opens.read().clone();
+        let mut merged: HashMap<String, Hit> = HashMap::new();
+        {
+            let ix = engine.index.read();
+            if parsed.name_keywords.is_empty() {
+                if !base.is_empty() {
+                    for h in ix.search(&base, 100, &opens, now()).0 {
+                        merged.insert(h.path.clone(), h);
+                    }
+                }
+            } else {
+                // Any one name keyword may match; files matching several rank higher.
+                for k in &parsed.name_keywords {
+                    let mut f = base.clone();
+                    f.add_term(k);
+                    for h in ix.search(&f, 60, &opens, now()).0 {
+                        merged.entry(h.path.clone()).and_modify(|e| e.score += h.score).or_insert(h);
+                    }
+                }
+            }
+        }
+        let mut items: Vec<Hit> = merged.into_values().collect();
+        items.sort_by(|a, b| b.score.cmp(&a.score).then(b.mtime.cmp(&a.mtime)));
+        items.truncate(100);
+        let kws: Vec<String> = parsed.content_keywords.iter().filter(|k| !k.trim().is_empty()).cloned().collect();
+        let mut content = Vec::new();
+        if !kws.is_empty() {
+            content = content_results(&engine, &kws, &base, 40)?;
+            if content.is_empty() && kws.len() > 1 {
+                let mut seen = std::collections::HashSet::new();
+                for k in &kws {
+                    for r in content_results(&engine, std::slice::from_ref(k), &base, 20)? {
+                        if seen.insert(r.path.clone()) {
+                            content.push(r);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(AiSearchResult { parsed, items, content })
+    })
+    .await
+}
+
+#[tauri::command]
+pub fn recent(engine: Eng<'_>, limit: Option<usize>) -> Vec<Hit> {
+    engine.index.read().recent(limit.unwrap_or(50))
+}
+
+#[tauri::command]
+pub fn open_path(app: AppHandle, engine: Eng<'_>, path: String) -> Res<()> {
+    use tauri_plugin_opener::OpenerExt;
+    if !Path::new(&path).exists() {
+        return Err(format!("見つかりません（移動または削除された可能性があります）: {path}"));
+    }
+    app.opener().open_path(&path, None::<&str>).map_err(err)?;
+    engine.record_open(&path);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn reveal_path(engine: Eng<'_>, path: String) -> Res<()> {
+    let p = PathBuf::from(&path);
+    if p.exists() {
+        std::process::Command::new("explorer.exe").raw_arg(format!("/select,\"{path}\"")).spawn().map_err(err)?;
+    } else if let Some(parent) = p.parent().filter(|d| d.exists()) {
+        std::process::Command::new("explorer.exe").arg(parent).spawn().map_err(err)?;
+    } else {
+        return Err(format!("見つかりません: {path}"));
+    }
+    engine.record_open(&path);
+    Ok(())
+}
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+#[derive(Serialize)]
+pub struct Preview {
+    pub hit: Option<Hit>,
+    pub text: Option<String>,
+    pub children: Vec<String>,
+}
+
+/// Up to `len` chars of `body`, starting a little before the first query word so the match is visible.
+fn excerpt(body: &str, words: &[String], len: usize) -> String {
+    let lower = body.to_lowercase();
+    let first = words
+        .iter()
+        .filter(|w| !w.is_empty())
+        .filter_map(|w| lower.find(&w.to_lowercase()))
+        .min()
+        .filter(|&p| lower.is_char_boundary(p))
+        .map(|p| lower[..p].chars().count())
+        .unwrap_or(0);
+    let start = first.saturating_sub(300);
+    let mut s: String = body.chars().skip(start).take(len).collect();
+    if start > 0 {
+        s.insert(0, '…');
+    }
+    s
+}
+
+#[tauri::command]
+pub async fn preview(engine: Eng<'_>, path: String, words: Option<Vec<String>>) -> Res<Preview> {
+    let engine = engine.inner().clone();
+    let words = words.unwrap_or_default();
+    blocking(move || {
+        let hit = engine.index.read().hit_for_path(&path);
+        let p = Path::new(&path);
+        let mut children = Vec::new();
+        let mut text = None;
+        if p.is_dir() {
+            if let Ok(rd) = std::fs::read_dir(p) {
+                children = rd.flatten().take(40).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+            }
+        } else if !hit.as_ref().is_some_and(|h| h.cloud) {
+            let body = engine.db.content_body(&path).ok().flatten().or_else(|| {
+                p.metadata()
+                    .is_ok_and(|m| m.len() < 30 * 1024 * 1024)
+                    .then(|| crate::extract::extract_text(p, 200_000).ok().flatten())
+                    .flatten()
+            });
+            text = body.map(|b| excerpt(&b, &words, 4000));
+        }
+        Ok(Preview { hit, text, children })
+    })
+    .await
+}
+
+#[tauri::command]
+pub fn status(engine: Eng<'_>) -> StatusView {
+    engine.status()
+}
+
+#[tauri::command]
+pub fn rescan(engine: Eng<'_>) {
+    engine.inner().rescan();
+}
+
+// ---------------- pins ----------------
+
+#[tauri::command]
+pub fn list_pins(engine: Eng<'_>) -> Res<Vec<Pin>> {
+    engine.db.pins().map_err(err)
+}
+
+#[tauri::command]
+pub fn add_pin(engine: Eng<'_>, alias: String, path: String) -> Res<()> {
+    let alias = alias.trim();
+    if alias.is_empty() {
+        return Err("あだ名を入力してください".into());
+    }
+    if !Path::new(&path).exists() {
+        return Err(format!("見つかりません: {path}"));
+    }
+    engine.db.add_pin(alias, &path).map_err(err)
+}
+
+#[tauri::command]
+pub fn remove_pin(engine: Eng<'_>, alias: String) -> Res<()> {
+    engine.db.remove_pin(&alias).map_err(err)
+}
+
+// ---------------- organize ----------------
+
+#[derive(Serialize)]
+pub struct FolderSummary {
+    pub files: usize,
+    pub by_category: Vec<(String, usize)>,
+    pub capped: bool,
+}
+
+#[tauri::command]
+pub async fn organize_inspect(root: String, recursive: bool) -> Res<FolderSummary> {
+    blocking(move || {
+        let files = organize::list_files(Path::new(&root), recursive)?;
+        let mut m: HashMap<&str, usize> = HashMap::new();
+        for f in &files {
+            *m.entry(organize::category(&f.ext)).or_default() += 1;
+        }
+        let mut by_category: Vec<(String, usize)> = m.into_iter().map(|(k, v)| (k.to_string(), v)).collect();
+        by_category.sort_by_key(|c| std::cmp::Reverse(c.1));
+        Ok(FolderSummary { capped: files.len() >= organize::MAX_FILES, files: files.len(), by_category })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn organize_preset(root: String, preset: Preset, recursive: bool) -> Res<Plan> {
+    blocking(move || organize::preset_plan(Path::new(&root), preset, recursive)).await
+}
+
+#[tauri::command]
+pub async fn organize_ai(engine: Eng<'_>, root: String, instruction: String, recursive: bool) -> Res<Plan> {
+    let key = settings::api_key().ok_or("AI整理を使うには、設定で Anthropic の APIキーを登録してください。プリセット整理はAIなしで使えます。")?;
+    let model = engine.settings.read().model.clone();
+    if instruction.trim().is_empty() {
+        return Err("どう整理したいかを入力してください".into());
+    }
+    blocking(move || {
+        let files = organize::list_files(Path::new(&root), recursive)?;
+        if files.is_empty() {
+            anyhow::bail!("整理するファイルがありません");
+        }
+        ai::plan_organize(&key, &model, &root, &instruction, &files)
+    })
+    .await
+}
+
+#[derive(Serialize)]
+pub struct ApplyResult {
+    pub history_id: Option<i64>,
+    pub moved: usize,
+    pub errors: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn organize_apply(engine: Eng<'_>, plan: Plan) -> Res<ApplyResult> {
+    let engine = engine.inner().clone();
+    blocking(move || {
+        let (done, errors) = organize::apply(&plan)?;
+        let history_id = if done.is_empty() { None } else { Some(engine.db.add_history(&plan.root, &plan.instruction, &done)?) };
+        Ok(ApplyResult { history_id, moved: done.len(), errors })
+    })
+    .await
+}
+
+#[tauri::command]
+pub fn history(engine: Eng<'_>) -> Res<Vec<HistoryItem>> {
+    engine.db.history(100).map_err(err)
+}
+
+#[derive(Serialize)]
+pub struct UndoResult {
+    pub restored: usize,
+    pub errors: Vec<String>,
+}
+
+#[tauri::command]
+pub async fn undo(engine: Eng<'_>, id: i64) -> Res<UndoResult> {
+    let engine = engine.inner().clone();
+    blocking(move || {
+        let item = engine.db.history_item(id)?.ok_or_else(|| anyhow::anyhow!("履歴が見つかりません"))?;
+        if item.undone {
+            anyhow::bail!("この整理はすでに元に戻しています");
+        }
+        let (restored, errors) = organize::undo(&item.moves);
+        engine.db.mark_undone(id)?;
+        Ok(UndoResult { restored, errors })
+    })
+    .await
+}
+
+// ---------------- duplicates ----------------
+
+#[tauri::command]
+pub async fn find_duplicates(engine: Eng<'_>, root: Option<String>, min_mb: Option<f64>) -> Res<Vec<crate::dupes::DupGroup>> {
+    // Before the first scan finishes we cannot tell cloud-only files apart, and reading one would download it.
+    if engine.status.last_scan.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+        return Err("ファイルの一覧を作成中です。終わってからもう一度お試しください。".into());
+    }
+    let engine = engine.inner().clone();
+    let min = (min_mb.unwrap_or(1.0).max(0.0) * 1024.0 * 1024.0) as u64;
+    let root = root.filter(|r| !r.trim().is_empty());
+    blocking(move || {
+        let files = engine.index.read().files_at_least(min, root.as_deref());
+        Ok(crate::dupes::find(files))
+    })
+    .await
+}
+
+/// Moves one file to the Recycle Bin (it can be restored from there).
+#[tauri::command]
+pub fn trash_path(engine: Eng<'_>, path: String) -> Res<()> {
+    let p = Path::new(&path);
+    if !p.is_file() {
+        return Err(format!("見つかりません: {path}"));
+    }
+    trash::delete(p).map_err(|e| format!("ごみ箱に移動できませんでした: {e}"))?;
+    engine.index.write().remove(&path);
+    Ok(())
+}
+
+// ---------------- settings ----------------
+
+#[derive(Serialize)]
+pub struct SettingsView {
+    pub settings: Settings,
+    pub has_api_key: bool,
+    pub default_excludes: Vec<String>,
+    pub version: String,
+}
+
+#[tauri::command]
+pub fn get_settings(app: AppHandle, engine: Eng<'_>) -> SettingsView {
+    SettingsView {
+        settings: engine.settings.read().clone(),
+        has_api_key: settings::api_key().is_some(),
+        default_excludes: settings::default_excludes(),
+        version: app.package_info().version.to_string(),
+    }
+}
+
+#[tauri::command]
+pub fn save_settings(app: AppHandle, engine: Eng<'_>, settings: Settings) -> Res<()> {
+    let old = engine.settings.read().clone();
+    if settings.hotkey != old.hotkey {
+        if let Err(e) = crate::set_hotkey(&app, &settings.hotkey) {
+            // Put the old shortcut back so the launcher keeps working.
+            let _ = crate::set_hotkey(&app, &old.hotkey);
+            return Err(format!("ショートカット「{}」を登録できません（他のアプリが使用中かもしれません）: {e}", settings.hotkey));
+        }
+        *engine.hotkey_error.lock() = None;
+    }
+    if settings.autostart != old.autostart {
+        use tauri_plugin_autostart::ManagerExt;
+        let al = app.autolaunch();
+        let r = if settings.autostart { al.enable() } else { al.disable() };
+        r.map_err(|e| format!("自動起動の設定に失敗しました: {e}"))?;
+    }
+    let rescan = settings.roots != old.roots || settings.excludes != old.excludes || settings.show_hidden != old.show_hidden;
+    let content_on = settings.content_enabled && (!old.content_enabled || settings.content_max_mb != old.content_max_mb);
+    engine.save_settings(settings).map_err(err)?;
+    if rescan || content_on {
+        engine.inner().rescan();
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub fn set_api_key(key: String) -> Res<()> {
+    settings::set_api_key(&key).map_err(err)
+}
+
+#[tauri::command]
+pub async fn test_api_key(engine: Eng<'_>, key: Option<String>) -> Res<()> {
+    let key = key.filter(|k| !k.trim().is_empty()).or_else(settings::api_key).ok_or("APIキーが未登録です")?;
+    let model = engine.settings.read().model.clone();
+    blocking(move || ai::test_key(key.trim(), &model)).await
+}
+
+#[tauri::command]
+pub fn hide_window(app: AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.hide();
+    }
+}

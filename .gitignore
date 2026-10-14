@@ -1,0 +1,21 @@
+# Rust / Cargo build output
+target/
+src-tauri/target/
+
+# Tauri generated files (schemas and other build artifacts)
+src-tauri/gen/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor settings (keep shared extension recommendations)
+.vscode/*
+!.vscode/extensions.json
+
+# Node (not used by the build, but ignored in case tooling adds it)
+node_modules/
