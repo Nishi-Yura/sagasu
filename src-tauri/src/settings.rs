@@ -16,11 +16,15 @@ pub struct Settings {
     pub content_max_mb: u64,
     /// Also index source code, logs and config files (off: documents only).
     pub content_code: bool,
+    /// Read text in images (screenshots, scans) with the OCR built into Windows.
+    pub content_ocr: bool,
     pub hotkey: String,
     pub autostart: bool,
     pub show_hidden: bool,
     /// Look for a new version on GitHub at startup.
     pub check_updates: bool,
+    /// Auto-organize rules.
+    pub rules: Vec<crate::rules::Rule>,
 }
 
 impl Default for Settings {
@@ -31,10 +35,12 @@ impl Default for Settings {
             content_enabled: true,
             content_max_mb: 30,
             content_code: false,
+            content_ocr: true,
             hotkey: "Alt+Space".into(),
             autostart: false,
             show_hidden: false,
             check_updates: true,
+            rules: Vec::new(),
         }
     }
 }

@@ -211,7 +211,7 @@ fn is_reserved(name: &str) -> bool {
         || (stem.len() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT")) && stem.as_bytes()[3].is_ascii_digit())
 }
 
-fn unique_target(root: &Path, rel: &Path, taken: &HashSet<String>) -> PathBuf {
+pub(crate) fn unique_target(root: &Path, rel: &Path, taken: &HashSet<String>) -> PathBuf {
     let key = |p: &Path| p.to_string_lossy().to_lowercase();
     if !root.join(rel).exists() && !taken.contains(&key(rel)) {
         return rel.to_path_buf();

@@ -8,7 +8,7 @@
 **散らかったフォルダは、プレビューしてから安全に片付く。**
 
 [![Windows 10 | 11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)](#-ダウンロードとインストール)
-[![Version](https://img.shields.io/badge/version-0.2.1-2563eb)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.5.0-2563eb)](CHANGELOG.md)
 [![Built with Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app/)
 [![Rust](https://img.shields.io/badge/Rust-stable-CE422B?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-16a34a)](LICENSE)
@@ -33,8 +33,10 @@
 | --- | --- |
 | **名前は覚えているのに、どこに保存したか忘れた** | 名前の一部を打つだけで、パソコン中から一瞬で候補が出ます |
 | **名前は覚えていないけど、中身は覚えている** | Word・Excel・PowerPoint・PDF の **本文** まで探せます |
+| **漢字の名前が出てこない** | 「けいり」と打てば「経理」、「みつもり」と打てば「見積書」が出ます（**読みで探す**） |
+| **スクリーンショットや、スキャンした画像を探したい** | 写っている **文字** で探せます。「振込」と打てば「振込先口座」と写った画像が見つかります |
 | **深い階層や OneDrive・NAS の、行きにくいフォルダ** | 「経理」など短い **あだ名** を付ければ、打つだけで一番上に出ます |
-| **ダウンロードやデスクトップが散らかっている** | 「種類別」などを選ぶだけで整理案を作成。**確認してから** 実行できます |
+| **ダウンロードやデスクトップが散らかっている** | 「種類別」などを選ぶだけで整理案を作成。**確認してから** 実行できます。よく使う片付けは **自動整理ルール** にしておけます |
 
 <br>
 
@@ -47,7 +49,10 @@
 ### 🔍 すぐ見つかる検索
 - 約10万件でも **数十ミリ秒** で表示
 - ひらがな・カタカナ・全角・半角・ローマ字の違いを気にせず検索
+- **読みで探す**：「けいり」で「経理」、「みつもり」で「見積書」
 - 少しの打ち間違いも拾う **あいまい検索**
+- **絞り込みボタン** で種類と期間をワンタッチで選べる
+- 空欄のとき、**最近の検索** から選び直せる
 - よく開くファイルほど上に表示
 
 </td>
@@ -55,7 +60,9 @@
 
 ### 📄 中身まで探せる
 - Word / Excel / PowerPoint / PDF / テキストの本文を検索
+- **画像の中の文字** も検索（スクリーンショット・スキャン）
 - 一致した部分をハイライトしてプレビュー
+- 画像は **サムネイル** でプレビュー
 - Shift_JIS の古いテキストにも対応
 - ファイルの追加・変更は自動で反映
 
@@ -67,6 +74,8 @@
 ### 🗂️ 安全に片付く整理
 - 種類別・年/月別・年別・拡張子別をワンクリック
 - **移動前にプレビュー**、ファイル単位で外せる
+- **自動整理ルール**：ダウンロードに来たファイルを、決めたフォルダへ自動で移動
+- **大きいファイル** の一覧から、不要なものをごみ箱へ
 - いつでも **元に戻せる** 履歴つき
 
 </td>
@@ -85,6 +94,18 @@
 
 <br>
 
+## 📊 動作の目安（参考値）
+
+| 対象 | 一覧の作成 | メモリ | 検索 |
+| --- | --- | --- | --- |
+| ユーザーフォルダ（約10万件） | 1 秒未満 | 約 60 MB | 約 10〜20 ms |
+| Cドライブ全体（Windows を含む・約150万件） | 数十秒 | 約 420 MB | 最大 約 80 ms |
+
+> [!NOTE]
+> 上の数値は参考値です。パソコンの性能や、ファイルの数・場所によって変わります。既定の検索場所はユーザーフォルダです。
+
+<br>
+
 ## 📥 ダウンロードとインストール
 
 1. [**Releases**](https://github.com/Nishi-Yura/sagasu/releases) から最新の **`Sagasu_x.y.z_x64-setup.exe`** をダウンロード
@@ -92,7 +113,7 @@
 3. 起動するとファイルの一覧づくりが始まります。数十秒〜数分で検索できるようになります
 
 > [!TIP]
-> **v0.1.0 をお使いの方へ：** v0.1.0 には自動アップデート機能がないため、v0.2.0 は上の手順で一度手動でインストールしてください。以降は、新しいバージョンが出ると画面下のボタンから自動で更新できます。
+> **v0.1.0 をお使いの方へ：** v0.1.0 には自動アップデート機能がないため、v0.5.0 は上の手順で一度手動でインストールしてください。以降は、新しいバージョンが出ると画面下のボタンから自動で更新できます。
 
 > [!NOTE]
 > Sagasu は電子署名をしていないため、初回に「Windows によって PC が保護されました」と表示されることがあります。
@@ -102,6 +123,7 @@
 | --- | --- |
 | OS | Windows 10 / 11（64bit） |
 | 必要なもの | Microsoft Edge WebView2（Windows 11 には標準で入っています） |
+| 読みで探す・画像の文字認識 | Windows の日本語入力（MS-IME）と、Windows の文字認識（どちらも Windows に標準で入っている機能を使います） |
 | インターネット | 更新の確認とダウンロードのときだけ使用します（設定でオフにできます） |
 
 <br>
@@ -125,7 +147,51 @@
 | `size>サイズ` / `size<サイズ` | 大きさで絞る | `size>100mb` |
 | `type:folder` / `type:file` | フォルダだけ / ファイルだけ | `経理 type:folder` |
 
-### 3. キーボードだけで操作する
+### 3. 漢字の読みで探す
+
+ひらがなで打つと、漢字の名前のファイルやフォルダも見つかります。ローマ字で打っても、かなに変換して探します。
+
+| 打つ言葉 | 見つかるもの |
+| --- | --- |
+| `けいり` | 「経理」 |
+| `みつもり` | 「見積書.docx」 |
+
+- Windows の日本語入力（MS-IME）を使って読みを取得します。Windows の日本語入力が使える環境でのみ動きます
+- 最初のスキャンのあと、読みはバックグラウンドで準備され、画面下に「読みを準備中 x / y」と表示されます。準備したものは保存され、次回からも使えます
+- 漢字で入力した検索は、これまでどおり動きます
+
+### 4. 種類と期間のボタンで絞り込む
+
+検索欄の下に、ボタンが 2 段並んでいます。
+
+| 段 | ボタン |
+| --- | --- |
+| 種類 | すべて / 文書 / PDF / 表計算 / スライド / 画像 / 動画 / 音楽 / フォルダ |
+| 期間 | いつでも / 今日 / 今週 / 今月 / 今年 / 去年 |
+
+- 言葉を打たなくても使えます。たとえば検索欄を空にして「画像」と「今週」を選ぶと、今週の画像が一覧に出ます
+- 言葉を打っているときは、その言葉に加えて絞り込まれます
+
+### 5. 画像の中の文字で探す
+
+スクリーンショットやスキャンした画像（png、jpg、jpeg、bmp、gif、tif、tiff）は、写っている文字も検索できます。文字の認識には Windows に入っている文字認識（OCR）を使います。無料で、インターネットに接続せずに動きます。
+
+<div align="center">
+<img src="docs/screenshot-ocr.png" width="760" alt="「振込」で検索した画面。「振込先口座」と写ったスクリーンショットが見つかり、右側のプレビューに画像と認識された文字が表示されている" />
+</div>
+
+- 右側のプレビューには、画像そのものと、認識された文字が表示されます
+- 文字の認識は完璧ではありません。読み間違いがあることがあります
+- 設定の「中身の検索」で、この機能のオン / オフを切り替えられます（[詳しいガイド](docs/USAGE.md)を参照）
+
+### 6. 最近の検索から選び直す
+
+検索欄が空のとき、「最近の検索」に直近の検索語が最大 12 件並びます。ボタンを押すと、その検索をやり直せます。「履歴を消す」を押すと、一覧を消せます。
+
+- 検索履歴に残るのは、検索のあとにファイルを開いたときの検索語だけです
+- 検索履歴はこのパソコンの中だけに保存されます
+
+### 7. キーボードだけで操作する
 
 | キー | 動作 |
 | --- | --- |
@@ -157,12 +223,47 @@
 > **Sagasu はファイルを削除しません。** 整理は「移動」だけで、同じ名前のファイルがあっても上書きせず `名前 (2).pdf` のように名前を変えます。
 > `C:\Windows`・`Program Files`・`AppData`、ドライブ直下、ユーザーフォルダ直下は整理できないようにしています。
 
+### 🤖 自動整理ルール
+
+よく行う片付けを **ルール** にしておくと、ファイルが届いたときに自動で移動します。
+
+<div align="center">
+<img src="docs/screenshot-rules.png" width="760" alt="整理タブの「自動整理ルール」カード。「PDFは書類へ」というルールが、ダウンロード側のフォルダから書類のフォルダへの移動として表示されている" />
+</div>
+
+- 見張っているフォルダに、条件に合うファイルが直接置かれ、そのファイルが **5 秒間変化しなくなったら** 移動先へ動かします（ダウンロードの完了を待つためです）
+- 途中まで保存されたファイル（`.crdownload`、`.part`、`.tmp` など）、隠しファイル、Office の一時ファイル（`~$`）は移動しません
+- 同じ名前のファイルがあっても上書きせず、`名前 (2).pdf` のように名前を変えます
+- 自動で移動したものはすべて「履歴」に「自動整理ルール「名前」」として残り、元に戻せます
+- 各ルールには **「今すぐ実行」**（フォルダにすでにあるファイルを、確認のあとで移動）、**「編集」**、**「削除」**、オン / オフのチェックボックスがあります
+- システムフォルダは見張り先・移動先に使えません
+- 別のドライブへの移動にも対応しています（コピーして、サイズを確かめてから元のファイルを削除します）
+
+**作り方の例：「ダウンロードに来た PDF を 書類 フォルダへ」**
+
+1. 「整理」タブの「自動整理ルール」カードで **「ルールを追加」** を押す
+2. **名前** に「PDFは書類へ」などわかりやすい名前を入れる
+3. **見張るフォルダ** に「ダウンロード」を指定する
+4. **種類** で「PDF」にチェックを入れる（どれもチェックしないと、すべての種類が対象になります）
+5. **名前に含む言葉** は空欄のままにする（空欄なら、名前に関係なく対象になります）
+6. **移動先** に「書類」フォルダを指定する
+7. 内容を確かめて「ルールを保存」を押す
+
+### 📦 大きいファイルを探す
+
+「整理」タブの「大きいファイルを探す」カードには、大きいファイルの上位 100 件が並びます。
+
+- 対象は、ページ上部のフォルダ欄に入れたフォルダの中です。フォルダ欄が空なら、検索する場所すべてが対象になります
+- 各ファイルの **「場所」** で、エクスプローラーに場所を開けます
+- 不要なファイルは **「ごみ箱へ」** で移動できます（ごみ箱から元に戻せます）
+
 <br>
 
 ## 🔒 プライバシーと安全
 
 - 🏠 検索用の一覧（インデックス）は **パソコンの中だけ**（`%APPDATA%\jp.sagasu.app`）に保存
 - ☁️ OneDrive の「オンラインのみ」のファイルは、勝手にダウンロードしないよう中身を読みません
+- 🖼️ 読みの取得や画像の文字認識は、Windows の機能を使ってパソコンの中で行います
 - 🗑️ ファイルを削除しません。重複ファイルの片付けも **ごみ箱へ移動**（ごみ箱から戻せます）
 - 📡 インターネットに接続するのは、新しいバージョンがあるかの確認（GitHub）と、更新をクリックしたときのダウンロードだけです。確認は設定でオフにできます
 - 🙈 ファイル名や中身を、どこにも送信することはありません
@@ -185,14 +286,24 @@
 - 「設定」→「検索する場所」に、そのファイルがあるフォルダやドライブ（例: `D:\`）が入っているか確認してください
 - `.` で始まるフォルダや隠しファイルは既定で対象外です。「隠しファイル・システムファイルも検索する」で含められます
 - 中身の検索は、起動直後しばらくは解析中です（画面下に進み具合が表示されます）
+- ソースコード・ログ・設定ファイルの中身は、「プログラムのソースコード・ログ・設定ファイル（.cs .js .json .log など）の中身も検索する」をオンにしたときだけ検索されます
 
 </details>
 
 <details>
 <summary><b>漢字の読みで探せますか？（「けいり」で「経理」）</b></summary>
 
-いまは対応していません。ひらがな⇔カタカナ、全角⇔半角、ローマ字⇔かなの違いは吸収します。
-名前の一部の漢字を入力するか、`in:フォルダ名` でフォルダを絞り込んでください。
+はい、探せます。Windows の日本語入力（MS-IME）を使って読みを取得します。ひらがなやローマ字で入力すると、漢字の名前のファイルも候補に出ます。
+読みは最初のスキャンのあとで準備されるため、準備が終わるまでは見つからないものがあります（画面下の「読みを準備中」の表示が終わるまでお待ちください）。
+漢字で入力した検索は、これまでどおり使えます。
+
+</details>
+
+<details>
+<summary><b>画像の中の文字が正しく検索できません</b></summary>
+
+文字の認識（OCR）は完璧ではなく、読み間違いがあることがあります。文字がはっきり写っている画像ほど見つかりやすくなります。
+「設定」→「中身の検索」で「画像（スクリーンショット・スキャン）の中の文字も検索する」がオンになっているかも確認してください（既定はオンです）。
 
 </details>
 
@@ -235,7 +346,7 @@ cargo test
 
 | フォルダ | 中身 |
 | --- | --- |
-| `src-tauri/src` | Rust のバックエンド（検索インデックス・全文抽出・整理） |
+| `src-tauri/src` | Rust のバックエンド（検索インデックス・全文抽出・読み・画像の文字認識・整理・自動整理ルール） |
 | `ui` | 画面（HTML / CSS / JavaScript、ビルド不要） |
 | `docs` | 使い方ガイドと画像 |
 
@@ -253,12 +364,16 @@ cargo test
 **Sagasu** is a file search launcher for Windows 10/11.
 
 - **Instant name search** across your folders (~100k files in tens of milliseconds), tolerant of hiragana/katakana, full/half width, romaji and small typos.
-- **Full-text search** inside Word, Excel, PowerPoint, PDF and text files, with highlighted previews.
+- **Reading search**: type hiragana or romaji to find kanji names (e.g. `けいり` → 経理). Uses the Japanese IME built into Windows; readings are prepared in the background after the first scan.
+- **Filter buttons** for file type and period, usable with or without typed words. **Recent searches** are shown when the box is empty.
+- **Full-text search** inside Word, Excel, PowerPoint, PDF and text files, with highlighted previews. **Text in images** (screenshots, scans) is recognized with the OCR built into Windows, offline, and is searchable too. Images show a thumbnail in the preview.
 - **Safe organizing**: presets (by type, year/month, year, extension); every plan is previewed first, nothing is ever deleted, collisions are renamed, and every run can be undone.
+- **Auto-organize rules**: when a matching file lands in a watched folder and stops changing for 5 seconds, it is moved to the destination. Downloads in progress and hidden files are skipped; every automatic move appears in History and can be undone.
+- **Large files**: lists the 100 largest files, with buttons to show the location or move a file to the Recycle Bin.
 - **Hotkey** `Alt+Space`, tray icon, pins/aliases, duplicate finder (moves copies to the Recycle Bin).
 - **Auto-update**: checks GitHub Releases at startup and installs signed updates with one click. Can be turned off in Settings.
 - **Privacy**: the index stays on your PC. The app connects to the internet only to check for and download updates. File names and contents are never sent anywhere.
 - **Logs**: `sagasu.log` stays on your PC; open the log folder from Settings → Updates & Support when reporting a bug.
-- **Install**: download `Sagasu_x.y.z_x64-setup.exe` from [Releases](https://github.com/Nishi-Yura/sagasu/releases). The installer is unsigned; on the SmartScreen prompt choose "More info" → "Run anyway". Users of v0.1.0 need to install v0.2.0 manually once; updates are automatic after that.
+- **Install**: download `Sagasu_x.y.z_x64-setup.exe` from [Releases](https://github.com/Nishi-Yura/sagasu/releases). The installer is unsigned; on the SmartScreen prompt choose "More info" → "Run anyway". Users of v0.1.0 need to install the latest version manually once; updates are automatic after that.
 
 </details>

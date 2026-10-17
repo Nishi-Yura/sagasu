@@ -336,6 +336,35 @@ pub fn trash_path(engine: Eng<'_>, path: String) -> Res<()> {
     Ok(())
 }
 
+#[tauri::command]
+pub fn large_files(engine: Eng<'_>, root: Option<String>, limit: Option<usize>) -> Vec<Hit> {
+    let root = root.filter(|r| !r.trim().is_empty());
+    engine.index.read().largest(limit.unwrap_or(100).min(500), root.as_deref())
+}
+
+// ---------------- auto-organize rules ----------------
+
+/// Files the rule would move right now (nothing is moved).
+#[tauri::command]
+pub async fn rule_preview(rule: crate::rules::Rule) -> Res<Vec<crate::db::MoveRecord>> {
+    blocking(move || rule.preview()).await
+}
+
+/// Runs the rule once on the files already in its folder and records it in the history.
+#[tauri::command]
+pub async fn rule_run(engine: Eng<'_>, rule: crate::rules::Rule) -> Res<ApplyResult> {
+    let engine = engine.inner().clone();
+    blocking(move || {
+        let mut r = rule.clone();
+        r.enabled = true;
+        let files: Vec<PathBuf> = r.preview()?.iter().map(|m| PathBuf::from(&m.from)).collect();
+        let (done, errors) = r.run(&files);
+        let history_id = if done.is_empty() { None } else { Some(engine.db.add_history(&r.folder, &format!("自動整理ルール「{}」", r.name), &done)?) };
+        Ok(ApplyResult { history_id, moved: done.len(), errors })
+    })
+    .await
+}
+
 // ---------------- updates ----------------
 
 #[derive(Serialize)]
@@ -428,12 +457,21 @@ pub fn save_settings(app: AppHandle, engine: Eng<'_>, settings: Settings) -> Res
         let r = if settings.autostart { al.enable() } else { al.disable() };
         r.map_err(|e| format!("自動起動の設定に失敗しました: {e}"))?;
     }
+    for r in settings.rules.iter().filter(|r| r.enabled) {
+        r.validate().map_err(|e| format!("ルール「{}」: {e}", r.name))?;
+    }
+    let rules_changed = settings.rules != old.rules;
     let rescan = settings.roots != old.roots || settings.excludes != old.excludes || settings.show_hidden != old.show_hidden;
     let content_on = settings.content_enabled
-        && (!old.content_enabled || settings.content_max_mb != old.content_max_mb || settings.content_code != old.content_code);
+        && (!old.content_enabled
+            || settings.content_max_mb != old.content_max_mb
+            || settings.content_code != old.content_code
+            || settings.content_ocr != old.content_ocr);
     engine.save_settings(settings).map_err(err)?;
     if rescan || content_on {
         engine.inner().rescan();
+    } else if rules_changed {
+        engine.inner().refresh_watch();
     }
     Ok(())
 }

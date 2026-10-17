@@ -67,6 +67,24 @@ kbd {
 .searchbar:focus-within { border-color: var(--accent); background: var(--panel); }
 .search-icon { width: 20px; height: 20px; fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; flex: none; }
 #q { flex: 1; border: 0; outline: 0; background: transparent; font-size: 17px; min-width: 0; user-select: text; }
+.filters { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; }
+.chip-group { display: flex; gap: 4px; flex-wrap: wrap; }
+.fchip {
+  border: 1px solid var(--border); background: var(--panel); color: var(--muted); border-radius: 99px;
+  padding: 2px 11px; font-size: 12.5px; cursor: pointer;
+}
+.fchip:hover { color: var(--text); border-color: var(--accent); }
+.fchip.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+.rule-form { border-top: 1px solid var(--border); margin-top: 10px; padding-top: 8px; }
+.rule-form .lbl { width: 120px; color: var(--muted); font-size: 13px; }
+.kinds { display: flex; flex-wrap: wrap; gap: 6px 12px; margin: 2px 0 8px 128px; }
+.kinds .kind { display: flex; gap: 4px; align-items: center; font-size: 13px; cursor: pointer; }
+.rule-off { opacity: .55; }
+.history { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; padding: 10px 16px 2px; }
+.history .hq { border: 1px solid var(--border); background: var(--panel); border-radius: 99px; padding: 2px 10px; font-size: 12.5px; cursor: pointer; }
+.history .hq:hover { border-color: var(--accent); }
+.history .clear { border: 0; background: none; color: var(--faint); font-size: 12px; cursor: pointer; margin-left: auto; }
+.pv-img { max-width: 100%; max-height: 320px; border-radius: 8px; display: block; margin-bottom: 10px; background: var(--panel-2); }
 .tabs { display: flex; gap: 2px; margin-top: 10px; overflow-x: auto; }
 .tab {
   border: 0; background: none; padding: 8px 14px; cursor: pointer; color: var(--muted);

@@ -13,6 +13,27 @@
       <input id="q" type="text" autocomplete="off" spellcheck="false"
              placeholder="ファイル名・中身で検索（例: 見積 ext:pdf 先月）" aria-label="検索" />
     </div>
+    <div class="filters" id="filters" aria-label="絞り込み">
+      <div class="chip-group" data-group="type">
+        <button class="fchip active" data-q="">すべて</button>
+        <button class="fchip" data-q="ext:doc,docx,odt,rtf,txt,md">文書</button>
+        <button class="fchip" data-q="ext:pdf">PDF</button>
+        <button class="fchip" data-q="エクセル">表計算</button>
+        <button class="fchip" data-q="パワポ">スライド</button>
+        <button class="fchip" data-q="画像">画像</button>
+        <button class="fchip" data-q="動画">動画</button>
+        <button class="fchip" data-q="音楽">音楽</button>
+        <button class="fchip" data-q="type:folder">フォルダ</button>
+      </div>
+      <div class="chip-group" data-group="period">
+        <button class="fchip active" data-q="">いつでも</button>
+        <button class="fchip" data-q="今日">今日</button>
+        <button class="fchip" data-q="今週">今週</button>
+        <button class="fchip" data-q="今月">今月</button>
+        <button class="fchip" data-q="今年">今年</button>
+        <button class="fchip" data-q="去年">去年</button>
+      </div>
+    </div>
     <nav class="tabs" role="tablist">
       <button class="tab active" data-view="search" role="tab">検索</button>
       <button class="tab" data-view="organize" role="tab">整理</button>
@@ -65,6 +86,44 @@
             <button id="org-cancel" class="btn">やめる</button>
             <button id="org-apply" class="btn primary">この内容で整理する</button>
           </div>
+        </div>
+
+        <div class="card">
+          <div class="step-title">自動整理ルール</div>
+          <p class="hint">「ダウンロードに来た PDF は書類フォルダへ」のように決めておくと、ファイルが届いたとき自動で移動します（ダウンロードが終わって 5 秒たってから）。移動はすべて「履歴」から元に戻せます。</p>
+          <div id="rule-list" class="list"></div>
+          <div class="row"><button id="rule-new" class="btn">ルールを追加</button></div>
+          <div id="rule-form" class="rule-form" hidden>
+            <div class="row"><span class="lbl">名前</span><input id="rule-name" type="text" placeholder="例: PDF は書類へ" /></div>
+            <div class="row"><span class="lbl">見張るフォルダ</span><input id="rule-folder" type="text" spellcheck="false" placeholder="例: C:\Users\you\Downloads" /><button class="btn" data-pick="rule-folder">選ぶ…</button></div>
+            <div class="row"><span class="lbl">種類</span><span class="hint">選ばなければすべての種類</span></div>
+            <div class="kinds" id="rule-kinds">
+              <label class="kind"><input type="checkbox" value="画像" /> 画像</label>
+              <label class="kind"><input type="checkbox" value="動画" /> 動画</label>
+              <label class="kind"><input type="checkbox" value="音楽" /> 音楽</label>
+              <label class="kind"><input type="checkbox" value="PDF" /> PDF</label>
+              <label class="kind"><input type="checkbox" value="文書" /> 文書</label>
+              <label class="kind"><input type="checkbox" value="表計算" /> 表計算</label>
+              <label class="kind"><input type="checkbox" value="プレゼン" /> プレゼン</label>
+              <label class="kind"><input type="checkbox" value="圧縮ファイル" /> 圧縮ファイル</label>
+              <label class="kind"><input type="checkbox" value="インストーラー" /> インストーラー</label>
+              <label class="kind"><input type="checkbox" value="コード" /> コード</label>
+              <label class="kind"><input type="checkbox" value="その他" /> その他</label>
+            </div>
+            <div class="row"><span class="lbl">名前に含む言葉</span><input id="rule-words" type="text" placeholder="例: 請求書, 見積（カンマ区切り・空ならすべて）" /></div>
+            <div class="row"><span class="lbl">移動先</span><input id="rule-dest" type="text" spellcheck="false" placeholder="例: C:\Users\you\Documents\書類" /><button class="btn" data-pick="rule-dest">選ぶ…</button></div>
+            <div class="actions">
+              <button id="rule-cancel" class="btn">やめる</button>
+              <button id="rule-save" class="btn primary">ルールを保存</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="step-title">大きいファイルを探す</div>
+          <p class="hint">容量を使っているファイルを大きい順に表示します。上のフォルダが空なら、検索する場所すべてが対象です。</p>
+          <div class="row"><button id="big-run" class="btn">大きいファイルを表示</button></div>
+          <div id="big-result"></div>
         </div>
 
         <div class="card">
@@ -130,6 +189,7 @@
         <div class="card">
           <div class="step-title">中身の検索</div>
           <label class="check"><input type="checkbox" id="content-enabled" /> Word・Excel・PowerPoint・PDF・テキストの中身を検索できるようにする</label>
+          <label class="check"><input type="checkbox" id="content-ocr" /> 画像（スクリーンショット・スキャン）の中の文字も検索する（Windows の文字認識を使用）</label>
           <label class="check"><input type="checkbox" id="content-code" /> プログラムのソースコード・ログ・設定ファイル（.cs .js .json .log など）の中身も検索する</label>
           <div class="hint">オンにすると、開発用のフォルダが多いパソコンでは検索用データが大きくなります。</div>
           <div class="row">

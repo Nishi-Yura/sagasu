@@ -164,8 +164,9 @@ function showView(name) {
   if (name === "pins") loadPins();
   if (name === "history") loadHistory();
   if (name === "settings") loadSettings();
-  if (name === "organize") renderQuickFolders();
+  if (name === "organize") { renderQuickFolders(); loadRules(); }
   if (name === "search") $("#q").focus();
+  $("#filters").hidden = name !== "search";
 }
 $$(".tab").forEach((t) => t.addEventListener("click", () => showView(t.dataset.view)));
 
@@ -180,6 +181,35 @@ let nameTimer, contentTimer;
 let lastWords = [];
 
 const state = { pins: [], names: null, content: null, recent: null };
+
+// ---- filter chips: extra query words added to what the user typed
+const filters = { type: "", period: "" };
+function effectiveQuery() {
+  return [q.value, filters.type, filters.period].filter((x) => x && x.trim()).join(" ");
+}
+$("#filters").addEventListener("click", (e) => {
+  const b = e.target.closest(".fchip");
+  if (!b) return;
+  const group = b.closest(".chip-group");
+  $$(".fchip", group).forEach((x) => x.classList.toggle("active", x === b));
+  filters[group.dataset.group] = b.dataset.q;
+  runSearch();
+  q.focus();
+});
+
+// ---- search history (kept in this PC's browser storage; only queries that led to opening a file)
+const HISTORY_KEY = "sagasu.history";
+function loadHistory_() {
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]"); } catch { return []; }
+}
+function saveHistory(text) {
+  const t = text.trim();
+  if (!t) return;
+  try {
+    const h = [t, ...loadHistory_().filter((x) => x !== t)].slice(0, 12);
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(h));
+  } catch { /* storage unavailable: history is optional */ }
+}
 
 function render() {
   const parts = [];
@@ -201,6 +231,13 @@ function render() {
           `<div class="path">${esc(p.path)}${p.exists ? "" : "（見つかりません）"}</div></div><div class="side"></div></div>`,
         { type: "pin", path: p.path }
       );
+    }
+  }
+
+  if (!state.names && state.recent) {
+    const hist = loadHistory_();
+    if (hist.length) {
+      parts.push(`<div class="history"><span class="hint">最近の検索</span>${hist.map((h) => `<button class="hq" data-hq="${esc(h)}">${esc(h)}</button>`).join("")}<button class="clear" data-hclear="1">履歴を消す</button></div>`);
     }
   }
 
@@ -251,7 +288,7 @@ function updateSel(scroll = true) {
 }
 
 async function runSearch() {
-  const text = q.value;
+  const text = effectiveQuery();
   const seq = ++searchSeq;
   clearTimeout(contentTimer);
   if (!text.trim()) {
@@ -265,7 +302,7 @@ async function runSearch() {
   try {
     const r = await invoke("search", { query: text, limit: 150 });
     if (seq !== searchSeq) return;
-    lastWords = text.split(/[\s　]+/).filter((w) => w && !w.includes(":") && !/^size[<>]/.test(w));
+    lastWords = q.value.split(/[\s　]+/).filter((w) => w && !w.includes(":") && !/^size[<>]/.test(w));
     state.pins = r.pins;
     state.names = r;
     state.content = null;
@@ -298,6 +335,7 @@ async function openItem(it, reveal = false) {
   if (!it) return;
   try {
     await invoke(reveal ? "reveal_path" : "open_path", { path: it.path });
+    saveHistory(q.value);
     invoke("hide_window");
   } catch (e) {
     toast(String(e), true);
@@ -327,6 +365,9 @@ q.addEventListener("keydown", (e) => {
 });
 
 resultsEl.addEventListener("click", (e) => {
+  const hq = e.target.closest("[data-hq]");
+  if (hq) { q.value = hq.dataset.hq; runSearch(); q.focus(); return; }
+  if (e.target.dataset.hclear) { try { localStorage.removeItem(HISTORY_KEY); } catch { /* ignore */ } render(); return; }
   const el = e.target.closest("[data-i]");
   if (!el) return;
   sel = Number(el.dataset.i);
@@ -391,6 +432,8 @@ async function loadPreview() {
   let body = "";
   if (p.children && p.children.length) {
     body = `<div class="pv-children">${p.children.map((c) => `<div>${esc(c)}</div>`).join("")}</div>`;
+  } else if (!h.cloud && KINDS.img.includes(extOf(name)) && !["heic", "tif", "tiff"].includes(extOf(name))) {
+    body = `<img class="pv-img" alt="" src="${esc(T.core.convertFileSrc(it.path))}">` + (p.text ? `<div class="pv-text">${highlight(p.text.slice(0, 4000), lastWords)}</div>` : "");
   } else if (p.text) {
     body = `<div class="pv-text">${highlight(p.text.slice(0, 4000), lastWords)}</div>`;
   } else if (h.cloud) {
@@ -548,6 +591,153 @@ $("#org-apply").addEventListener("click", async () => {
   }
 });
 
+// ---------------------------------------------------------------- auto-organize rules
+
+let editingRule = null; // id of the rule in the form, or null for a new one
+
+async function currentSettings() {
+  return (await invoke("get_settings")).settings;
+}
+
+async function saveRules(rules) {
+  const s = await currentSettings();
+  await invoke("save_settings", { settings: { ...s, rules } });
+}
+
+async function loadRules() {
+  const list = $("#rule-list");
+  try {
+    const rules = (await currentSettings()).rules;
+    list.innerHTML = rules.length
+      ? rules.map((r) => `
+        <div class="list-item ${r.enabled ? "" : "rule-off"}"><div class="head">
+          <label class="check" title="オン / オフ"><input type="checkbox" data-toggle="${esc(r.id)}" ${r.enabled ? "checked" : ""}></label>
+          <div class="grow">
+            <div class="title">${esc(r.name)}</div>
+            <div class="sub">${esc(r.folder)} → ${esc(r.dest)}</div>
+            <div class="sub">${r.kinds.length ? esc(r.kinds.join("・")) : "すべての種類"}${r.name_contains.length ? ` · 名前に「${esc(r.name_contains.join("」「"))}」` : ""}</div>
+          </div>
+          <button class="btn small" data-run="${esc(r.id)}">今すぐ実行</button>
+          <button class="btn small" data-edit="${esc(r.id)}">編集</button>
+          <button class="btn small danger" data-del="${esc(r.id)}">削除</button>
+        </div></div>`).join("")
+      : `<div class="hint">まだルールはありません。</div>`;
+  } catch (e) {
+    toast(String(e), true);
+  }
+}
+
+function openRuleForm(r) {
+  editingRule = r ? r.id : null;
+  $("#rule-name").value = r?.name || "";
+  $("#rule-folder").value = r?.folder || "";
+  $("#rule-dest").value = r?.dest || "";
+  $("#rule-words").value = (r?.name_contains || []).join(", ");
+  $$("#rule-kinds input").forEach((c) => (c.checked = !!r?.kinds.includes(c.value)));
+  $("#rule-form").hidden = false;
+  $("#rule-name").focus();
+}
+
+$("#rule-new").addEventListener("click", () => openRuleForm(null));
+$("#rule-cancel").addEventListener("click", () => ($("#rule-form").hidden = true));
+$("#rule-form").addEventListener("click", async (e) => {
+  const target = e.target.dataset.pick;
+  if (!target) return;
+  const p = await pickPath(true);
+  if (p) $("#" + target).value = p;
+});
+
+$("#rule-save").addEventListener("click", async () => {
+  const rule = {
+    id: editingRule || `r${Date.now()}`,
+    name: $("#rule-name").value.trim(),
+    enabled: true,
+    folder: $("#rule-folder").value.trim(),
+    kinds: $$("#rule-kinds input:checked").map((c) => c.value),
+    name_contains: $("#rule-words").value.split(/[,、，]/).map((w) => w.trim()).filter(Boolean),
+    dest: $("#rule-dest").value.trim(),
+  };
+  try {
+    const rules = (await currentSettings()).rules.filter((r) => r.id !== rule.id);
+    const idx = (await currentSettings()).rules.findIndex((r) => r.id === rule.id);
+    rules.splice(idx < 0 ? rules.length : idx, 0, rule);
+    await saveRules(rules);
+    $("#rule-form").hidden = true;
+    toast("ルールを保存しました。これから届くファイルに適用されます");
+    loadRules();
+  } catch (e) {
+    toast(String(e), true);
+  }
+});
+
+$("#rule-list").addEventListener("click", async (e) => {
+  const d = e.target.dataset;
+  const rules = await currentSettings().then((s) => s.rules).catch(() => []);
+  const find = (id) => rules.find((r) => r.id === id);
+  try {
+    if (d.toggle) {
+      const r = find(d.toggle);
+      r.enabled = e.target.checked;
+      await saveRules(rules);
+      loadRules();
+    } else if (d.edit) {
+      openRuleForm(find(d.edit));
+    } else if (d.del) {
+      if (!(await confirmBox(`ルール「${find(d.del).name}」を削除します。（移動済みのファイルはそのままです）`, "削除"))) return;
+      await saveRules(rules.filter((r) => r.id !== d.del));
+      loadRules();
+    } else if (d.run) {
+      const r = find(d.run);
+      const plan = await invoke("rule_preview", { rule: r });
+      if (!plan.length) { toast("いま移動するファイルはありません"); return; }
+      const sample = plan.slice(0, 8).map((m) => "・" + m.from.split("\\").pop()).join("\n");
+      if (!(await confirmBox(`${plan.length}件を「${r.dest}」へ移動します。\n${sample}${plan.length > 8 ? "\n…" : ""}\n\nあとで「履歴」から元に戻せます。`, "移動する"))) return;
+      const res = await invoke("rule_run", { rule: r });
+      toast(res.errors.length ? `${res.moved}件を移動しました（${res.errors.length}件は失敗）` : `${res.moved}件を移動しました`, res.errors.length > 0);
+    }
+  } catch (er) {
+    toast(String(er), true);
+    loadRules();
+  }
+});
+
+// ---------------------------------------------------------------- large files
+
+$("#big-run").addEventListener("click", async () => {
+  const out = $("#big-result");
+  try {
+    const files = await invoke("large_files", { root: $("#org-root").value.trim() || null, limit: 100 });
+    if (!files.length) { out.innerHTML = `<div class="empty-note">ファイルがありません。</div>`; return; }
+    const total = files.reduce((a, f) => a + f.size, 0);
+    out.innerHTML = `<div class="plan-stats">上位${files.length}件で合計 ${fmtSize(total)}</div><div class="plan-tree">` +
+      files.map((f) =>
+        `<div class="plan-move dup-row"><span class="from grow" title="${esc(f.path)}">${esc(f.path)}</span>` +
+        `<span class="hint">${fmtSize(f.size)}</span>` +
+        `<button class="btn small" data-reveal="${esc(f.path)}">場所</button>` +
+        `<button class="btn small danger" data-trash1="${esc(f.path)}">ごみ箱へ</button></div>`
+      ).join("") + `</div>`;
+  } catch (e) {
+    out.innerHTML = `<div class="empty-note">${esc(e)}</div>`;
+  }
+});
+
+$("#big-result").addEventListener("click", async (e) => {
+  const r = e.target.dataset.reveal, t = e.target.dataset.trash1;
+  if (r) invoke("reveal_path", { path: r }).catch((er) => toast(String(er), true));
+  if (!t) return;
+  if (!(await confirmBox(`ごみ箱に移動します:
+${t}
+
+ごみ箱から元に戻せます。`, "ごみ箱へ"))) return;
+  try {
+    await invoke("trash_path", { path: t });
+    e.target.closest(".dup-row").remove();
+    toast("ごみ箱に移動しました");
+  } catch (er) {
+    toast(String(er), true);
+  }
+});
+
 // ---------------------------------------------------------------- duplicates
 
 $("#dup-run").addEventListener("click", async () => {
@@ -696,6 +886,7 @@ async function loadSettings() {
     $("#content-enabled").checked = s.content_enabled;
     $("#content-max").value = s.content_max_mb;
     $("#content-code").checked = s.content_code;
+    $("#content-ocr").checked = s.content_ocr;
     $("#hotkey").value = s.hotkey;
     $("#autostart").checked = s.autostart;
     $("#check-updates").checked = s.check_updates;
@@ -738,12 +929,16 @@ hk.addEventListener("keydown", (e) => {
 $("#hotkey-reset").addEventListener("click", () => (hk.value = "Alt+Space"));
 
 $("#settings-save").addEventListener("click", async () => {
+  // Rules are edited on the organize screen; always save the latest ones.
+  const latestRules = await currentSettings().then((x) => x.rules).catch(() => settingsCache.rules);
   const s = {
     ...settingsCache,
+    rules: latestRules,
     excludes: $("#excludes").value.split("\n").map((x) => x.trim()).filter(Boolean),
     show_hidden: $("#show-hidden").checked,
     content_enabled: $("#content-enabled").checked,
     content_code: $("#content-code").checked,
+    content_ocr: $("#content-ocr").checked,
     content_max_mb: Math.max(1, Number($("#content-max").value) || 30),
     hotkey: hk.value.trim(),
     autostart: $("#autostart").checked,
@@ -829,6 +1024,7 @@ async function refreshStatus() {
     let t;
     if (s.scanning) t = `ファイルを調べています… ${s.scanned.toLocaleString()}件`;
     else t = `${s.indexed.toLocaleString()}件のファイル・フォルダ`;
+    if (s.reading_total) t += ` · 読みを準備中 ${s.reading_done.toLocaleString()} / ${s.reading_total.toLocaleString()}`;
     if (s.content_running && s.content_total) t += ` · 中身を解析中 ${s.content_done.toLocaleString()} / ${s.content_total.toLocaleString()}`;
     else if (s.content_indexed) t += ` · 中身 ${s.content_indexed.toLocaleString()}件`;
     $("#status").textContent = t;

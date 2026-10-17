@@ -73,6 +73,8 @@ struct Entry {
     is_dir: bool,
     cloud: bool,
     alive: bool,
+    /// Hiragana reading of a name with kanji ("" = the IME could not read it, None = not looked up yet).
+    reading: Option<Box<str>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -170,6 +172,7 @@ impl Index {
             is_dir: m.is_dir,
             cloud: m.cloud,
             alive: true,
+            reading: None,
         });
         self.by_path.insert(key(path), idx);
     }
@@ -245,6 +248,45 @@ impl Index {
             .collect()
     }
 
+    /// Distinct file-name stems containing kanji whose reading has not been looked up yet.
+    pub fn names_needing_reading(&self) -> Vec<String> {
+        let mut set = std::collections::HashSet::new();
+        for e in self.entries.iter().filter(|e| e.alive && e.reading.is_none()) {
+            let stem = stem_of(&e.name);
+            if crate::reading::has_kanji(stem) {
+                set.insert(stem.to_string());
+            }
+        }
+        set.into_iter().collect()
+    }
+
+    /// Stores readings (keyed by the original name stem); "" marks names the IME could not read.
+    pub fn set_readings(&mut self, map: &HashMap<String, String>) {
+        for e in self.entries.iter_mut().filter(|e| e.alive && e.reading.is_none()) {
+            if let Some(r) = map.get(stem_of(&e.name)) {
+                e.reading = Some(normalize(r).into());
+            }
+        }
+    }
+
+    /// The `limit` largest files (optionally only below `under`), biggest first.
+    pub fn largest(&self, limit: usize, under: Option<&str>) -> Vec<Hit> {
+        let prefix = under.map(|u| format!("{}\\", u.trim_end_matches(['\\', '/']).to_lowercase()));
+        let mut v: Vec<(usize, u64)> = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.alive && !e.is_dir)
+            .map(|(i, e)| (i, e.size))
+            .collect();
+        v.par_sort_unstable_by_key(|x| std::cmp::Reverse(x.1));
+        v.into_iter()
+            .map(|(i, _)| self.hit(i, 0))
+            .filter(|h| prefix.as_ref().is_none_or(|p| h.path.to_lowercase().starts_with(p)))
+            .take(limit)
+            .collect()
+    }
+
     pub fn hit(&self, i: usize, score: i32) -> Hit {
         let e = &self.entries[i];
         Hit {
@@ -285,7 +327,10 @@ impl Index {
                 }
                 let mut score = 0i32;
                 for alts in &f.terms {
-                    score += alts.iter().filter_map(|t| term_score(&e.name_norm, &dir.norm, t)).max()?;
+                    score += alts
+                        .iter()
+                        .filter_map(|t| term_score(&e.name_norm, &dir.norm, t).or_else(|| reading_score(e.reading.as_deref(), t)))
+                        .max()?;
                 }
                 if f.has_terms() {
                     if *e.name_norm == *query_joined || stem(&e.name_norm) == query_joined {
@@ -328,6 +373,13 @@ impl Index {
     }
 }
 
+fn stem_of(name: &str) -> &str {
+    match name.rfind('.') {
+        Some(i) if i > 0 => &name[..i],
+        _ => name,
+    }
+}
+
 fn stem(name: &str) -> &str {
     match name.rfind('.') {
         Some(i) if i > 0 => &name[..i],
@@ -337,6 +389,17 @@ fn stem(name: &str) -> &str {
 
 fn is_boundary(c: char) -> bool {
     matches!(c, ' ' | '_' | '-' | '.' | '(' | ')' | '[' | ']' | '【' | '】' | '「' | '」' | '・' | '　')
+}
+
+/// Kana typed for a kanji name: 「けいり」 finds 「経理」 through the name's reading.
+fn reading_score(reading: Option<&str>, t: &str) -> Option<i32> {
+    let r = reading.filter(|r| !r.is_empty())?;
+    let kana = t.chars().count() >= 2 && t.chars().all(|c| ('\u{3041}'..='\u{309f}').contains(&c) || c == 'ー');
+    if !kana {
+        return None;
+    }
+    let pos = r.find(t)?;
+    Some(if pos == 0 { 70 } else { 45 })
 }
 
 fn term_score(name: &str, dir: &str, t: &str) -> Option<i32> {
@@ -513,6 +576,22 @@ mod tests {
         // "o" appears in the folder "Documents" but only report_*.pdf / memo have it in the name.
         let (h, _) = ix.search(&parse("o"), 10, &HashMap::new(), 0);
         assert!(h.iter().all(|x| x.name.to_lowercase().contains('o')), "{h:?}");
+    }
+
+    #[test]
+    fn reading_search() {
+        let mut ix = sample();
+        let names = ix.names_needing_reading();
+        assert!(names.contains(&"経理".to_string()) && names.contains(&"見積書_A社".to_string()));
+        let mut m = HashMap::new();
+        m.insert("経理".to_string(), "ケイリ".to_string());
+        m.insert("見積書_A社".to_string(), "みつもりしょ_aしゃ".to_string());
+        ix.set_readings(&m);
+        let (h, _) = ix.search(&parse("けいり"), 10, &HashMap::new(), 0);
+        assert_eq!(h[0].name, "経理");
+        let (h, _) = ix.search(&parse("mitsumori"), 10, &HashMap::new(), 0);
+        assert!(h.iter().any(|x| x.name == "見積書_A社.xlsx"), "romaji -> kana -> reading: {h:?}");
+        assert!(ix.names_needing_reading().is_empty());
     }
 
     #[test]

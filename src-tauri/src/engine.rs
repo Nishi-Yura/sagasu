@@ -15,7 +15,9 @@ use crate::db::Db;
 use crate::extract;
 use crate::index::{Excludes, FileMeta, Index, ScanProgress, ext_of, scan, scan_subtree};
 use crate::normalize::normalize;
+use crate::rules::Rule;
 use crate::settings::Settings;
+use crate::{ocr, reading};
 
 /// Upper bound on characters kept per document in the full-text index.
 const CONTENT_MAX_CHARS: usize = 300_000;
@@ -28,6 +30,8 @@ pub struct Status {
     pub content_total: AtomicU64,
     pub content_done: AtomicU64,
     pub last_scan: AtomicI64,
+    pub reading_total: AtomicU64,
+    pub reading_done: AtomicU64,
 }
 
 impl Default for ScanProgress {
@@ -47,6 +51,8 @@ pub struct StatusView {
     pub content_indexed: i64,
     pub last_scan: i64,
     pub hotkey_error: Option<String>,
+    pub reading_total: u64,
+    pub reading_done: u64,
 }
 
 enum ContentMsg {
@@ -67,6 +73,9 @@ pub struct Engine {
     scan_lock: Mutex<()>,
     /// Set when the launcher shortcut could not be registered.
     pub hotkey_error: Mutex<Option<String>>,
+    /// New files in rule folders, waiting until they stop changing: path → (size, last change).
+    rule_pending: Mutex<HashMap<PathBuf, (u64, std::time::Instant)>>,
+    reading_tx: Mutex<Option<Sender<()>>>,
 }
 
 impl Engine {
@@ -89,6 +98,8 @@ impl Engine {
             content_tx: Mutex::new(None),
             scan_lock: Mutex::new(()),
             hotkey_error: Mutex::new(None),
+            rule_pending: Mutex::new(HashMap::new()),
+            reading_tx: Mutex::new(None),
         }))
     }
 
@@ -109,6 +120,8 @@ impl Engine {
             content_indexed: self.db.content_count().unwrap_or(0),
             last_scan: self.status.last_scan.load(Ordering::Relaxed),
             hotkey_error: self.hotkey_error.lock().clone(),
+            reading_total: self.status.reading_total.load(Ordering::Relaxed),
+            reading_done: self.status.reading_done.load(Ordering::Relaxed),
         }
     }
 
@@ -118,7 +131,19 @@ impl Engine {
         *self.content_tx.lock() = Some(tx);
         let me = self.clone();
         std::thread::Builder::new().name("content".into()).spawn(move || me.content_loop(rx)).ok();
+        let (rtx, rrx) = channel();
+        *self.reading_tx.lock() = Some(rtx);
+        let me = self.clone();
+        std::thread::Builder::new().name("reading".into()).spawn(move || me.reading_loop(rrx)).ok();
+        let me = self.clone();
+        std::thread::Builder::new().name("rules".into()).spawn(move || me.rules_loop()).ok();
         self.rescan();
+    }
+
+    /// Re-applies the watched folders after the rules changed.
+    pub fn refresh_watch(self: &Arc<Self>) {
+        let roots = self.settings.read().root_paths();
+        self.restart_watcher(&roots);
     }
 
     pub fn rescan(self: &Arc<Self>) {
@@ -147,6 +172,7 @@ impl Engine {
         }
         self.restart_watcher(&roots);
         self.send(ContentMsg::FullPass);
+        self.wake_reading();
     }
 
     fn send(&self, m: ContentMsg) {
@@ -169,6 +195,13 @@ impl Engine {
         for r in roots {
             if let Err(e) = w.watch(r, RecursiveMode::Recursive) {
                 log::warn!("cannot watch {}: {e}", r.display());
+            }
+        }
+        // Rule folders outside the search locations still need to be watched (top level only).
+        let rule_dirs: Vec<PathBuf> = self.settings.read().rules.iter().filter(|r| r.enabled).map(|r| PathBuf::from(&r.folder)).collect();
+        for d in rule_dirs.iter().filter(|d| !under_any(d, roots)) {
+            if let Err(e) = w.watch(d, RecursiveMode::NonRecursive) {
+                log::warn!("cannot watch rule folder {}: {e}", d.display());
             }
         }
         *self.watcher.lock() = Some(w);
@@ -201,14 +234,23 @@ impl Engine {
     }
 
     fn apply_changes(&self, paths: HashSet<PathBuf>) {
-        let (ex, hidden) = {
+        let (ex, hidden, roots, rule_dirs) = {
             let s = self.settings.read();
-            (Excludes::new(&s.excludes), s.show_hidden)
+            let rule_dirs: Vec<PathBuf> = s.rules.iter().filter(|r| r.enabled).map(|r| PathBuf::from(&r.folder)).collect();
+            (Excludes::new(&s.excludes), s.show_hidden, s.root_paths(), rule_dirs)
         };
         let mut content = Vec::new();
+        let mut new_names = false;
         for p in paths {
+            // Files landing in a rule folder are queued; they are moved once they stop changing.
+            if p.parent().is_some_and(|parent| rule_dirs.iter().any(|d| same_path(d, parent)))
+                && let Ok(md) = std::fs::metadata(&p)
+                && md.is_file()
+            {
+                self.rule_pending.lock().insert(p.clone(), (md.len(), std::time::Instant::now()));
+            }
             let ps = p.to_string_lossy().into_owned();
-            if ex.is_excluded(&ps) || (!hidden && in_dot_dir(&ps)) {
+            if !under_any(&p, &roots) || ex.is_excluded(&ps) || (!hidden && in_dot_dir(&ps)) {
                 continue;
             }
             match std::fs::symlink_metadata(&p) {
@@ -218,6 +260,7 @@ impl Engine {
                         continue;
                     }
                     let is_new_dir = meta.is_dir && !self.index.read().contains(&ps);
+                    new_names |= reading::has_kanji(&ps);
                     self.index.write().upsert(&ps, &meta);
                     if is_new_dir {
                         // A folder moved or copied in: its children produce no events of their own.
@@ -242,6 +285,99 @@ impl Engine {
         for m in content {
             self.send(m);
         }
+        if new_names {
+            self.wake_reading();
+        }
+    }
+
+    // ---------------- kanji readings ----------------
+
+    fn wake_reading(&self) {
+        if let Some(tx) = self.reading_tx.lock().as_ref() {
+            let _ = tx.send(());
+        }
+    }
+
+    /// Looks up readings for names with kanji: first in the database cache, then with the Windows IME.
+    fn reading_loop(self: Arc<Self>, rx: Receiver<()>) {
+        let mut ime: Option<Option<reading::Readings>> = None;
+        while rx.recv().is_ok() {
+            while rx.try_recv().is_ok() {}
+            let names = self.index.read().names_needing_reading();
+            if names.is_empty() {
+                continue;
+            }
+            let cache = self.db.readings().unwrap_or_default();
+            let (known, missing): (Vec<String>, Vec<String>) = names.into_iter().partition(|n| cache.contains_key(n));
+            let found: HashMap<String, String> = known.into_iter().filter_map(|n| cache.get(&n).map(|r| (n, r.clone()))).collect();
+            self.index.write().set_readings(&found);
+            if missing.is_empty() {
+                continue;
+            }
+            let Some(ime) = ime.get_or_insert_with(reading::Readings::new) else {
+                log::info!("Japanese IME not available; reading search disabled");
+                continue;
+            };
+            self.status.reading_total.store(missing.len() as u64, Ordering::Relaxed);
+            self.status.reading_done.store(0, Ordering::Relaxed);
+            let t = std::time::Instant::now();
+            for chunk in missing.chunks(200) {
+                let rows: Vec<(String, String)> =
+                    chunk.iter().cloned().zip(ime.readings(chunk)).map(|(n, r)| (n, r.unwrap_or_default())).collect();
+                let _ = self.db.put_readings(&rows);
+                self.index.write().set_readings(&rows.into_iter().collect());
+                self.status.reading_done.fetch_add(chunk.len() as u64, Ordering::Relaxed);
+            }
+            self.status.reading_total.store(0, Ordering::Relaxed);
+            log::info!("read {} kanji names in {:?}", missing.len(), t.elapsed());
+        }
+    }
+
+    // ---------------- auto-organize rules ----------------
+
+    fn rules_loop(self: Arc<Self>) {
+        loop {
+            std::thread::sleep(Duration::from_secs(2));
+            let ready: Vec<PathBuf> = {
+                let mut pending = self.rule_pending.lock();
+                let mut ready = Vec::new();
+                pending.retain(|p, (size, since)| {
+                    let Ok(md) = std::fs::metadata(p) else { return false };
+                    if md.len() != *size {
+                        *size = md.len();
+                        *since = std::time::Instant::now();
+                        return true;
+                    }
+                    // Unchanged for 5 seconds: the download or copy has finished.
+                    if since.elapsed() >= Duration::from_secs(5) {
+                        ready.push(p.clone());
+                        return false;
+                    }
+                    true
+                });
+                ready
+            };
+            if ready.is_empty() {
+                continue;
+            }
+            let rules: Vec<Rule> = self.settings.read().rules.iter().filter(|r| r.enabled).cloned().collect();
+            let mut taken: HashSet<PathBuf> = HashSet::new();
+            for rule in rules {
+                let files: Vec<PathBuf> = ready.iter().filter(|p| !taken.contains(*p) && rule.matches(p)).cloned().collect();
+                if files.is_empty() {
+                    continue;
+                }
+                taken.extend(files.iter().cloned());
+                let (done, errors) = rule.run(&files);
+                for e in &errors {
+                    log::warn!("rule {}: {e}", rule.name);
+                }
+                if !done.is_empty() {
+                    log::info!("rule {} moved {} file(s)", rule.name, done.len());
+                    let _ = self.db.add_history(&rule.folder, &format!("自動整理ルール「{}」", rule.name), &done);
+                }
+            }
+        }
     }
 
     // ---------------- full-text indexing ----------------
@@ -259,34 +395,34 @@ impl Engine {
         }
     }
 
-    /// (enabled, max file size, include source code / logs)
-    fn content_limits(&self) -> (bool, u64, bool) {
+    /// (enabled, max file size, include source code / logs, read images with OCR)
+    fn content_limits(&self) -> (bool, u64, bool, bool) {
         let s = self.settings.read();
-        (s.content_enabled, s.content_max_mb * 1024 * 1024, s.content_code)
+        (s.content_enabled, s.content_max_mb * 1024 * 1024, s.content_code, s.content_ocr && ocr_ready())
     }
 
     fn content_one(&self, path: &str) -> anyhow::Result<()> {
-        let (enabled, max, code) = self.content_limits();
+        let (enabled, max, code, use_ocr) = self.content_limits();
         if !enabled {
             return Ok(());
         }
         let Some(hit) = self.index.read().hit_for_path(path) else { return Ok(()) };
         let ext = ext_of(&normalize(&hit.name)).to_string();
-        if hit.is_dir || hit.cloud || hit.size > max || !extract::should_index(&ext, code) {
+        if hit.is_dir || hit.cloud || hit.size > max || !(extract::should_index(&ext, code) || (use_ocr && ocr::is_image(&ext))) {
             return Ok(());
         }
         let c = self.db.conn()?;
-        let body = extract::extract_text(Path::new(path), CONTENT_MAX_CHARS).ok().flatten().unwrap_or_default();
+        let body = read_text(Path::new(path));
         self.db.put_content(&c, path, hit.mtime, hit.size, &body)
     }
 
     fn content_full_pass(&self, rx: &Receiver<ContentMsg>) -> anyhow::Result<()> {
-        let (enabled, max, code) = self.content_limits();
+        let (enabled, max, code, use_ocr) = self.content_limits();
         if !enabled {
             return Ok(());
         }
         let stored = self.db.content_mtimes()?;
-        let candidates = self.index.read().content_candidates(max, |e| extract::should_index(e, code));
+        let candidates = self.index.read().content_candidates(max, |e| extract::should_index(e, code) || (use_ocr && ocr::is_image(e)));
         let live: HashSet<&str> = candidates.iter().map(|c| c.path.as_str()).collect();
         let todo: Vec<_> = candidates.iter().filter(|c| stored.get(&c.path) != Some(&c.mtime)).collect();
         let mut c = self.db.conn()?;
@@ -316,7 +452,7 @@ impl Engine {
             let bodies: Vec<_> = chunk
                 .iter()
                 .map(|cand| {
-                    let body = extract::extract_text(Path::new(&cand.path), CONTENT_MAX_CHARS).ok().flatten().unwrap_or_default();
+                    let body = read_text(Path::new(&cand.path));
                     (cand, body)
                 })
                 .collect();
@@ -347,6 +483,33 @@ impl Engine {
         let _ = self.db.record_open(path);
         *self.opens.write().entry(path.to_string()).or_insert(0) += 1;
     }
+}
+
+/// Text of a document, or of an image through OCR. Unreadable files index as empty text.
+fn read_text(path: &Path) -> String {
+    let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    let r = if ocr::is_image(&ext) { ocr::ocr_image(path, CONTENT_MAX_CHARS) } else { extract::extract_text(path, CONTENT_MAX_CHARS) };
+    r.ok().flatten().unwrap_or_default()
+}
+
+/// Windows OCR availability, checked once.
+fn ocr_ready() -> bool {
+    static READY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *READY.get_or_init(ocr::available)
+}
+
+fn same_path(a: &Path, b: &Path) -> bool {
+    let n = |p: &Path| p.to_string_lossy().to_lowercase().replace('/', "\\").trim_end_matches('\\').to_string();
+    n(a) == n(b)
+}
+
+fn under_any(p: &Path, roots: &[PathBuf]) -> bool {
+    let l = p.to_string_lossy().to_lowercase();
+    roots.iter().any(|r| {
+        let r = r.to_string_lossy().to_lowercase();
+        let r = r.trim_end_matches('\\');
+        l == r || l.starts_with(&format!("{r}\\"))
+    })
 }
 
 /// True when a parent folder of `path` is a dot-folder (skipped by the scan unless hidden files are shown).

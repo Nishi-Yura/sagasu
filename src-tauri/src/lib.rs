@@ -5,8 +5,11 @@ mod engine;
 mod extract;
 mod index;
 mod normalize;
+mod ocr;
 mod organize;
 mod query;
+mod reading;
+mod rules;
 mod settings;
 
 use std::sync::Arc;
@@ -150,6 +153,9 @@ pub fn run() {
             commands::undo,
             commands::find_duplicates,
             commands::trash_path,
+            commands::large_files,
+            commands::rule_preview,
+            commands::rule_run,
             commands::check_update,
             commands::install_update,
             commands::open_log_folder,

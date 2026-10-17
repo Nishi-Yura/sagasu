@@ -66,7 +66,7 @@ impl Db {
 
     /// Schema version stored in `PRAGMA user_version`. Bump it and add a step below
     /// whenever the tables change, so existing users' data is upgraded in place.
-    pub const SCHEMA_VERSION: i64 = 2;
+    pub const SCHEMA_VERSION: i64 = 3;
 
     fn migrate(&self) -> Result<()> {
         let c = self.conn()?;
@@ -89,7 +89,11 @@ impl Db {
             // Let the file shrink when the full-text index drops documents (takes effect after one VACUUM).
             c.execute_batch("PRAGMA auto_vacuum = INCREMENTAL; VACUUM;")?;
         }
-        // Future steps go here: `if current < 3 { ... }`.
+        // v2 → v3: cache of kanji readings from the Windows IME ("" = could not be read).
+        if current < 3 {
+            c.execute_batch("CREATE TABLE IF NOT EXISTS readings(name TEXT PRIMARY KEY, reading TEXT NOT NULL) WITHOUT ROWID;")?;
+        }
+        // Future steps go here: `if current < 4 { ... }`.
         c.execute_batch(&format!("PRAGMA user_version = {}", Self::SCHEMA_VERSION))?;
         Ok(())
     }
@@ -221,6 +225,28 @@ impl Db {
             .conn()?
             .query_row("SELECT body FROM content_fts WHERE path = ?1", [path], |r| r.get(0))
             .optional()?)
+    }
+
+    // ---- kanji readings cache ----
+
+    pub fn readings(&self) -> Result<HashMap<String, String>> {
+        let c = self.conn()?;
+        let mut st = c.prepare("SELECT name, reading FROM readings")?;
+        let m = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?.filter_map(|r| r.ok()).collect();
+        Ok(m)
+    }
+
+    pub fn put_readings(&self, rows: &[(String, String)]) -> Result<()> {
+        let mut c = self.conn()?;
+        let tx = c.transaction()?;
+        {
+            let mut st = tx.prepare("INSERT OR REPLACE INTO readings(name, reading) VALUES(?1, ?2)")?;
+            for (n, r) in rows {
+                st.execute(params![n, r])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     // ---- pins ----
