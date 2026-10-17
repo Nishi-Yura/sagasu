@@ -1018,6 +1018,7 @@ setTimeout(async () => {
 // ---------------------------------------------------------------- status
 
 let lastScanSeen = null;
+let lastNotice = null;
 async function refreshStatus() {
   try {
     const s = await invoke("status");
@@ -1028,6 +1029,10 @@ async function refreshStatus() {
     if (s.content_running && s.content_total) t += ` · 中身を解析中 ${s.content_done.toLocaleString()} / ${s.content_total.toLocaleString()}`;
     else if (s.content_indexed) t += ` · 中身 ${s.content_indexed.toLocaleString()}件`;
     $("#status").textContent = t;
+    // Auto-organize results (moved files, or why a move failed) appear as a notification once.
+    const [seq, msg, isErr] = s.rule_notice;
+    if (lastNotice !== null && seq !== lastNotice && msg) toast(msg, isErr);
+    lastNotice = seq;
     // A finished scan replaces the index: refresh the idle "recent files" list.
     const scanChanged = s.last_scan !== lastScanSeen;
     lastScanSeen = s.last_scan;

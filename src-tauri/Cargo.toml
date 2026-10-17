@@ -40,7 +40,7 @@ wana_kana = "5.0.0"
 zip = "9.0.3"
 
 windows = { version = "0.62.2", features = [
-  "Win32_Foundation", "Win32_System_Com", "Win32_UI_Input_Ime", "Win32_System_WinRT",
+  "Win32_Foundation", "Win32_System_Com", "Win32_UI_Input_Ime", "Win32_System_WinRT", "Win32_System_Threading",
   "Media_Ocr", "Graphics_Imaging", "Storage", "Storage_Streams", "Foundation", "Foundation_Collections", "Globalization",
 ] }
 
@@ -49,6 +49,13 @@ tauri-build = { version = "2", features = [] }
 
 [dev-dependencies]
 tempfile = "3"
+
+# Same optimizations as release without LTO: builds in a few minutes, for local benchmarks.
+[profile.fast]
+inherits = "release"
+lto = false
+codegen-units = 16
+incremental = true
 
 [profile.release]
 codegen-units = 1

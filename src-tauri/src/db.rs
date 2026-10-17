@@ -66,7 +66,7 @@ impl Db {
 
     /// Schema version stored in `PRAGMA user_version`. Bump it and add a step below
     /// whenever the tables change, so existing users' data is upgraded in place.
-    pub const SCHEMA_VERSION: i64 = 3;
+    pub const SCHEMA_VERSION: i64 = 4;
 
     fn migrate(&self) -> Result<()> {
         let c = self.conn()?;
@@ -93,7 +93,19 @@ impl Db {
         if current < 3 {
             c.execute_batch("CREATE TABLE IF NOT EXISTS readings(name TEXT PRIMARY KEY, reading TEXT NOT NULL) WITHOUT ROWID;")?;
         }
-        // Future steps go here: `if current < 4 { ... }`.
+        // v3 → v4: full-text rows are addressed by rowid (= content_meta.id). Before, replacing a document
+        // deleted by the unindexed `path` column, which scanned the whole index for every file.
+        // The content index is rebuilt by the next pass; nothing the user made is lost.
+        if current < 4 {
+            c.execute_batch(
+                "DROP TABLE IF EXISTS content_fts;
+                 DROP TABLE IF EXISTS content_meta;
+                 CREATE TABLE content_meta(id INTEGER PRIMARY KEY, path TEXT NOT NULL UNIQUE, mtime INTEGER NOT NULL, size INTEGER NOT NULL);
+                 CREATE VIRTUAL TABLE content_fts USING fts5(path UNINDEXED, body, tokenize='trigram');",
+            )?;
+            c.execute_batch("PRAGMA incremental_vacuum;")?;
+        }
+        // Future steps go here: `if current < 5 { ... }`.
         c.execute_batch(&format!("PRAGMA user_version = {}", Self::SCHEMA_VERSION))?;
         Ok(())
     }
@@ -154,20 +166,32 @@ impl Db {
     }
 
     pub fn put_content(&self, c: &Connection, path: &str, mtime: i64, size: u64, body: &str) -> Result<()> {
-        c.execute("DELETE FROM content_fts WHERE path = ?1", [path])?;
+        let existing: Option<i64> =
+            c.prepare_cached("SELECT id FROM content_meta WHERE path = ?1")?.query_row([path], |r| r.get(0)).optional()?;
+        let id = match existing {
+            Some(id) => {
+                c.prepare_cached("DELETE FROM content_fts WHERE rowid = ?1")?.execute([id])?;
+                c.prepare_cached("UPDATE content_meta SET mtime = ?2, size = ?3 WHERE id = ?1")?.execute(params![id, mtime, size as i64])?;
+                id
+            }
+            None => {
+                c.prepare_cached("INSERT INTO content_meta(path, mtime, size) VALUES(?1, ?2, ?3)")?.execute(params![path, mtime, size as i64])?;
+                c.last_insert_rowid()
+            }
+        };
         if !body.is_empty() {
-            c.execute("INSERT INTO content_fts(path, body) VALUES(?1, ?2)", params![path, body])?;
+            c.prepare_cached("INSERT INTO content_fts(rowid, path, body) VALUES(?1, ?2, ?3)")?.execute(params![id, path, body])?;
         }
-        c.execute(
-            "INSERT OR REPLACE INTO content_meta(path, mtime, size) VALUES(?1, ?2, ?3)",
-            params![path, mtime, size as i64],
-        )?;
         Ok(())
     }
 
     pub fn remove_content(&self, c: &Connection, path: &str) -> Result<()> {
-        c.execute("DELETE FROM content_fts WHERE path = ?1", [path])?;
-        c.execute("DELETE FROM content_meta WHERE path = ?1", [path])?;
+        let id: Option<i64> =
+            c.prepare_cached("SELECT id FROM content_meta WHERE path = ?1")?.query_row([path], |r| r.get(0)).optional()?;
+        if let Some(id) = id {
+            c.prepare_cached("DELETE FROM content_fts WHERE rowid = ?1")?.execute([id])?;
+            c.prepare_cached("DELETE FROM content_meta WHERE id = ?1")?.execute([id])?;
+        }
         Ok(())
     }
 
@@ -223,7 +247,7 @@ impl Db {
     pub fn content_body(&self, path: &str) -> Result<Option<String>> {
         Ok(self
             .conn()?
-            .query_row("SELECT body FROM content_fts WHERE path = ?1", [path], |r| r.get(0))
+            .query_row("SELECT body FROM content_fts WHERE rowid = (SELECT id FROM content_meta WHERE path = ?1)", [path], |r| r.get(0))
             .optional()?)
     }
 

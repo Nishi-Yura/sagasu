@@ -53,6 +53,8 @@ pub struct StatusView {
     pub hotkey_error: Option<String>,
     pub reading_total: u64,
     pub reading_done: u64,
+    /// Latest auto-organize result to show as a notification: (sequence, message, is_error).
+    pub rule_notice: (u64, String, bool),
 }
 
 enum ContentMsg {
@@ -73,9 +75,10 @@ pub struct Engine {
     scan_lock: Mutex<()>,
     /// Set when the launcher shortcut could not be registered.
     pub hotkey_error: Mutex<Option<String>>,
-    /// New files in rule folders, waiting until they stop changing: path → (size, last change).
+    /// New files in rule folders, waiting until they stop changing: path ↁE(size, last change).
     rule_pending: Mutex<HashMap<PathBuf, (u64, std::time::Instant)>>,
     reading_tx: Mutex<Option<Sender<()>>>,
+    rule_notice: Mutex<(u64, String, bool)>,
 }
 
 impl Engine {
@@ -100,6 +103,7 @@ impl Engine {
             hotkey_error: Mutex::new(None),
             rule_pending: Mutex::new(HashMap::new()),
             reading_tx: Mutex::new(None),
+            rule_notice: Mutex::new((0, String::new(), false)),
         }))
     }
 
@@ -122,6 +126,7 @@ impl Engine {
             hotkey_error: self.hotkey_error.lock().clone(),
             reading_total: self.status.reading_total.load(Ordering::Relaxed),
             reading_done: self.status.reading_done.load(Ordering::Relaxed),
+            rule_notice: self.rule_notice.lock().clone(),
         }
     }
 
@@ -376,6 +381,13 @@ impl Engine {
                     log::info!("rule {} moved {} file(s)", rule.name, done.len());
                     let _ = self.db.add_history(&rule.folder, &format!("自動整理ルール「{}」", rule.name), &done);
                 }
+                let msg = match (done.len(), errors.first()) {
+                    (n, None) => format!("自動整理「{}」: {n}件を移動しました（履歴から元に戻せます）", rule.name),
+                    (0, Some(e)) => format!("自動整理「{}」: 移動できませんでした — {e}", rule.name),
+                    (n, Some(e)) => format!("自動整理「{}」: {n}件を移動、{}件は失敗 — {e}", rule.name, errors.len()),
+                };
+                let mut notice = self.rule_notice.lock();
+                *notice = (notice.0 + 1, msg, !errors.is_empty());
             }
         }
     }
@@ -411,6 +423,9 @@ impl Engine {
         if hit.is_dir || hit.cloud || hit.size > max || !(extract::should_index(&ext, code) || (use_ocr && ocr::is_image(&ext))) {
             return Ok(());
         }
+        if !code && ocr::is_image(&ext) && in_dev_project(Path::new(path), &mut HashMap::new()) {
+            return Ok(());
+        }
         let c = self.db.conn()?;
         let body = read_text(Path::new(path));
         self.db.put_content(&c, path, hit.mtime, hit.size, &body)
@@ -422,7 +437,11 @@ impl Engine {
             return Ok(());
         }
         let stored = self.db.content_mtimes()?;
-        let candidates = self.index.read().content_candidates(max, |e| extract::should_index(e, code) || (use_ocr && ocr::is_image(e)));
+        let mut candidates = self.index.read().content_candidates(max, |e| extract::should_index(e, code) || (use_ocr && ocr::is_image(e)));
+        if !code {
+            let mut cache = HashMap::new();
+            candidates.retain(|c| !ocr::is_image(&ext_lower(&c.path)) || !in_dev_project(Path::new(&c.path), &mut cache));
+        }
         let live: HashSet<&str> = candidates.iter().map(|c| c.path.as_str()).collect();
         let todo: Vec<_> = candidates.iter().filter(|c| stored.get(&c.path) != Some(&c.mtime)).collect();
         let mut c = self.db.conn()?;
@@ -439,43 +458,96 @@ impl Engine {
                 let _ = self.db.shrink();
             }
         }
-        self.status.content_total.store(todo.len() as u64, Ordering::Relaxed);
+        let started = std::time::Instant::now();
+        let total = todo.len();
+        self.status.content_total.store(total as u64, Ordering::Relaxed);
         self.status.content_done.store(0, Ordering::Relaxed);
         self.status.content_running.store(true, Ordering::Relaxed);
-        // Newest files first: they are the ones people look for.
-        let mut todo = todo;
-        todo.sort_by_key(|c| std::cmp::Reverse(c.mtime));
-        for chunk in todo.chunks(20) {
-            if !self.settings.read().content_enabled {
+        // Documents first (quick to read), images after (OCR is slower); newest first within each,
+        // because recent files are the ones people look for.
+        let mut todo: Vec<(String, i64, u64)> = todo.into_iter().map(|c| (c.path.clone(), c.mtime, c.size)).collect();
+        todo.sort_by_key(|(p, m, _)| (ocr::is_image(&ext_lower(p)), std::cmp::Reverse(*m)));
+        let todo = Arc::new(todo);
+
+        // Reader threads extract text in parallel; this thread writes to SQLite in batches.
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (out_tx, out_rx) = std::sync::mpsc::sync_channel::<(usize, String, Duration)>(128);
+        {
+            let todo = todo.clone();
+            let cancel = cancel.clone();
+            content_pool().spawn(move || {
+                use rayon::prelude::*;
+                (0..todo.len()).into_par_iter().with_max_len(4).for_each_with(out_tx, |tx, i| {
+                    if cancel.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    let t = std::time::Instant::now();
+                    let body = read_text(Path::new(&todo[i].0));
+                    let _ = tx.send((i, body, t.elapsed()));
+                });
+            });
+        }
+        let mut batch: Vec<(usize, String, Duration)> = Vec::with_capacity(128);
+        let mut by_ext: HashMap<String, (u32, Duration)> = HashMap::new();
+        let mut restart = false;
+        loop {
+            let finished = match out_rx.recv_timeout(Duration::from_millis(400)) {
+                Ok(item) => {
+                    batch.push(item);
+                    while batch.len() < 128 {
+                        match out_rx.try_recv() {
+                            Ok(item) => batch.push(item),
+                            Err(_) => break,
+                        }
+                    }
+                    false
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => false,
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => true,
+            };
+            if !batch.is_empty() {
+                let tx = c.transaction()?;
+                for (i, body, took) in &batch {
+                    let (path, mtime, size) = &todo[*i];
+                    let e = by_ext.entry(ext_lower(path)).or_default();
+                    e.0 += 1;
+                    e.1 += *took;
+                    self.db.put_content(&tx, path, *mtime, *size, body)?;
+                }
+                tx.commit()?;
+                self.status.content_done.fetch_add(batch.len() as u64, Ordering::Relaxed);
+                batch.clear();
+            }
+            if finished {
                 break;
             }
-            let bodies: Vec<_> = chunk
-                .iter()
-                .map(|cand| {
-                    let body = read_text(Path::new(&cand.path));
-                    (cand, body)
-                })
-                .collect();
-            let tx = c.transaction()?;
-            for (cand, body) in &bodies {
-                self.db.put_content(&tx, &cand.path, cand.mtime, cand.size, body)?;
+            if !self.settings.read().content_enabled {
+                cancel.store(true, Ordering::Relaxed);
             }
-            tx.commit()?;
-            self.status.content_done.fetch_add(chunk.len() as u64, Ordering::Relaxed);
-            // Stay polite to the rest of the PC, and let a newer full pass take over.
-            std::thread::sleep(Duration::from_millis(15));
-            if let Ok(next) = rx.try_recv() {
+            // Live updates from the watcher are handled between batches; a newer full pass takes over.
+            while let Ok(next) = rx.try_recv() {
                 match next {
                     ContentMsg::FullPass => {
-                        self.status.content_running.store(false, Ordering::Relaxed);
-                        return self.content_full_pass(rx);
+                        cancel.store(true, Ordering::Relaxed);
+                        restart = true;
                     }
                     ContentMsg::File(p) => self.content_one(&p)?,
                     ContentMsg::Remove(p) => self.db.remove_content(&c, &p)?,
                 }
             }
         }
+        if restart {
+            self.status.content_running.store(false, Ordering::Relaxed);
+            return self.content_full_pass(rx);
+        }
         self.status.content_running.store(false, Ordering::Relaxed);
+        if total > 0 {
+            log::info!("content pass: {total} files in {:?}", started.elapsed());
+            let mut slow: Vec<_> = by_ext.into_iter().collect();
+            slow.sort_by_key(|(_, (_, d))| std::cmp::Reverse(*d));
+            let top: Vec<String> = slow.iter().take(6).map(|(e, (n, d))| format!("{e}: {n} files {:.1}s", d.as_secs_f64())).collect();
+            log::info!("content time by type: {}", top.join(", "));
+        }
         Ok(())
     }
 
@@ -485,11 +557,104 @@ impl Engine {
     }
 }
 
+/// Files whose presence marks a folder as a software project.
+const PROJECT_MARKERS: &[&str] = &[
+    ".git", "package.json", "Cargo.toml", "ProjectSettings", "pom.xml", "build.gradle", "go.mod", "pyproject.toml",
+    "composer.json", "Gemfile", "CMakeLists.txt", "pubspec.yaml",
+];
+
+/// Whether `path` lies inside a software project (some parent folder holds a project marker).
+/// Images there are textures, icons and UI assets rather than screenshots or scans, so they are
+/// not read with OCR unless the user opts into indexing source code. `cache` remembers folders.
+fn in_dev_project(path: &Path, cache: &mut HashMap<PathBuf, bool>) -> bool {
+    let mut chain = Vec::new();
+    let mut result = false;
+    let mut cur = path.parent();
+    while let Some(dir) = cur {
+        if let Some(&known) = cache.get(dir) {
+            result = known;
+            break;
+        }
+        chain.push(dir.to_path_buf());
+        if PROJECT_MARKERS.iter().any(|m| dir.join(m).exists()) {
+            result = true;
+            break;
+        }
+        cur = dir.parent();
+    }
+    // Every folder walked lies between the file and the answer, so they share it.
+    for dir in chain {
+        cache.insert(dir, result);
+    }
+    result
+}
+
+fn ext_lower(path: &str) -> String {
+    Path::new(path).extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default()
+}
+
+/// Threads for reading file contents: all cores but one, below normal priority so the PC stays responsive.
+fn content_pool() -> &'static rayon::ThreadPool {
+    static POOL: std::sync::OnceLock<rayon::ThreadPool> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        let n = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).saturating_sub(1).max(2);
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(n)
+            .thread_name(|i| format!("content-{i}"))
+            .start_handler(|_| lower_thread_priority())
+            .build()
+            .expect("content thread pool")
+    })
+}
+
+#[cfg(windows)]
+fn lower_thread_priority() {
+    use windows::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL};
+    // SAFETY: changes only the priority of the calling thread.
+    unsafe {
+        let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+    }
+}
+
+#[cfg(not(windows))]
+fn lower_thread_priority() {}
+
 /// Text of a document, or of an image through OCR. Unreadable files index as empty text.
 fn read_text(path: &Path) -> String {
     let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
-    let r = if ocr::is_image(&ext) { ocr::ocr_image(path, CONTENT_MAX_CHARS) } else { extract::extract_text(path, CONTENT_MAX_CHARS) };
+    let r = if ocr::is_image(&ext) {
+        let _slot = OcrSlot::acquire();
+        ocr::ocr_image(path, CONTENT_MAX_CHARS)
+    } else {
+        extract::extract_text(path, CONTENT_MAX_CHARS)
+    };
     r.ok().flatten().unwrap_or_default()
+}
+
+/// At most this many images are decoded and recognized at once: a large photo needs tens of MB
+/// while it is processed, so unbounded parallel OCR could take a gigabyte.
+const OCR_SLOTS: usize = 4;
+
+struct OcrSlot;
+
+static OCR_IN_USE: (parking_lot::Mutex<usize>, parking_lot::Condvar) = (parking_lot::Mutex::new(0), parking_lot::Condvar::new());
+
+impl OcrSlot {
+    fn acquire() -> Self {
+        let mut n = OCR_IN_USE.0.lock();
+        while *n >= OCR_SLOTS {
+            OCR_IN_USE.1.wait(&mut n);
+        }
+        *n += 1;
+        OcrSlot
+    }
+}
+
+impl Drop for OcrSlot {
+    fn drop(&mut self) {
+        *OCR_IN_USE.0.lock() -= 1;
+        OCR_IN_USE.1.notify_one();
+    }
 }
 
 /// Windows OCR availability, checked once.
@@ -521,6 +686,19 @@ fn in_dot_dir(path: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn dev_project_detection() {
+        let d = tempfile::tempdir().unwrap();
+        let proj = d.path().join("myapp");
+        std::fs::create_dir_all(proj.join("assets/icons")).unwrap();
+        std::fs::write(proj.join("package.json"), "{}").unwrap();
+        std::fs::create_dir_all(d.path().join("Screenshots")).unwrap();
+        let mut cache = std::collections::HashMap::new();
+        assert!(super::in_dev_project(&proj.join("assets/icons/logo.png"), &mut cache));
+        assert!(super::in_dev_project(&proj.join("assets/bg.png"), &mut cache), "cached parent");
+        assert!(!super::in_dev_project(&d.path().join("Screenshots/shot.png"), &mut cache));
+    }
+
     #[test]
     fn dot_dirs() {
         assert!(super::in_dot_dir("C:\\Users\\a\\.git\\config"));

@@ -1,0 +1,58 @@
+name: 不具合の報告
+description: Sagasu の動作がおかしいときはこちらから教えてください
+title: "[不具合] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ご報告ありがとうございます。わかる範囲で大丈夫です。
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 何が起きたか
+      description: どんなことが起きたか、教えてください。
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 再現手順
+      description: 起きるまでの操作を順番に書いてください。
+      placeholder: |
+        1. 検索画面で「…」と入力する
+        2. 「…」をクリックする
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待した動き
+      description: 本来はどうなってほしかったですか？
+  - type: input
+    id: sagasu-version
+    attributes:
+      label: Sagasu のバージョン
+      description: 設定の一番下に表示されています（例：Sagasu v0.5.0）。
+      placeholder: v0.5.0
+    validations:
+      required: true
+  - type: dropdown
+    id: windows-version
+    attributes:
+      label: Windows のバージョン
+      options:
+        - Windows 11
+        - Windows 10
+        - その他
+  - type: textarea
+    id: log
+    attributes:
+      label: ログ
+      description: |
+        設定 →「アップデートとサポート」→「ログフォルダを開く」で開いたフォルダにある sagasu.log の内容を、関係する部分だけで構いませんので貼り付けてください。
+        **ご注意：** ログにはファイル名やフォルダ名が含まれることがあり、この Issue は公開されます。人に見られたくない名前などは、貼り付ける前に消してください。
+      render: text
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: スクリーンショット
+      description: 画像をここにドラッグ＆ドロップできます。写り込む個人情報にご注意ください。

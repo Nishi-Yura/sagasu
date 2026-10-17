@@ -1,5 +1,6 @@
 //! Hiragana readings of Japanese text via the Microsoft IME (MS-IME).
 
+use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
@@ -12,11 +13,14 @@ use windows::core::{BSTR, IUnknown, w};
 
 /// Longest input (in chars) that is sent to the IME; longer ones yield None.
 const MAX_CHARS: usize = 200;
+/// Readings cached on the worker; the cache is dropped when it grows past this.
+const CACHE_LIMIT: usize = 100_000;
 
 type Request = (Vec<String>, Sender<Vec<Option<String>>>);
 
 /// Converts names to hiragana readings with the Windows Japanese IME.
 /// Owns a dedicated background thread (COM objects are apartment-bound), so it is Send + Sync and cheap to call from any thread.
+/// (Several IME instances do not run in parallel, so one worker is all that helps.)
 pub struct Readings {
     tx: Sender<Request>,
 }
@@ -45,21 +49,118 @@ impl Readings {
 
     /// Batch version: same order as input.
     pub fn readings(&self, texts: &[String]) -> Vec<Option<String>> {
+        // Split each text at ASCII punctuation; identical IME units are converted once per batch.
+        let mut ids: HashMap<String, usize> = HashMap::new();
+        let mut units: Vec<String> = Vec::new();
+        let mut intern = |s: &str| -> usize {
+            if let Some(&i) = ids.get(s) {
+                return i;
+            }
+            let i = units.len();
+            units.push(s.to_owned());
+            ids.insert(s.to_owned(), i);
+            i
+        };
+        let plans: Vec<Option<Vec<Seg>>> = texts
+            .iter()
+            .map(|t| {
+                if t.is_empty() || t.chars().count() > MAX_CHARS {
+                    return None;
+                }
+                Some(
+                    segments(t)
+                        .into_iter()
+                        .map(|(is_punct, s)| {
+                            if is_punct || s.is_ascii() {
+                                Seg::Lit(ime_ascii(s))
+                            } else {
+                                Seg::Ime(intern(s))
+                            }
+                        })
+                        .collect(),
+                )
+            })
+            .collect();
+
+        let n = units.len();
         let (reply_tx, reply_rx) = mpsc::channel();
-        if self.tx.send((texts.to_vec(), reply_tx)).is_err() {
-            return vec![None; texts.len()];
-        }
-        match reply_rx.recv() {
-            Ok(out) if out.len() == texts.len() => out,
-            _ => vec![None; texts.len()],
+        let results: Vec<Option<String>> = if self.tx.send((units, reply_tx)).is_err() {
+            vec![None; n]
+        } else {
+            match reply_rx.recv() {
+                Ok(out) if out.len() == n => out,
+                _ => vec![None; n],
+            }
+        };
+
+        plans
+            .into_iter()
+            .map(|plan| {
+                let mut out = String::new();
+                for seg in plan? {
+                    match seg {
+                        Seg::Ime(i) => out.push_str(results[i].as_deref()?),
+                        Seg::Lit(s) => out.push_str(&s),
+                    }
+                }
+                Some(out)
+            })
+            .collect()
+    }
+}
+
+enum Seg {
+    Ime(usize),
+    Lit(String),
+}
+
+fn is_kanji_char(c: char) -> bool {
+    matches!(c, '\u{4E00}'..='\u{9FFF}' | '\u{3400}'..='\u{4DBF}' | '々')
+}
+
+/// Splits at ASCII punctuation and spaces (flag true). Words keep their ASCII letters and digits
+/// so the IME still sees the context around numerals and counters.
+fn segments(s: &str) -> Vec<(bool, &str)> {
+    let mut out: Vec<(bool, &str)> = Vec::new();
+    let mut start = 0;
+    for (i, c) in s.char_indices() {
+        if c.is_ascii() && !c.is_ascii_alphanumeric() {
+            if start < i {
+                out.push((false, &s[start..i]));
+            }
+            out.push((true, &s[i..i + 1]));
+            start = i + 1;
         }
     }
+    if start < s.len() {
+        out.push((false, &s[start..]));
+    }
+    out
+}
+
+/// What the IME returns for ASCII text: full-width forms, with a few symbols read out.
+fn ime_ascii(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 3);
+    for c in s.chars() {
+        match c {
+            ' ' => out.push('\u{3000}'),
+            '#' => out.push_str("しゃーぷ"),
+            '$' => out.push_str("どる"),
+            '@' => out.push_str("たんか"),
+            '"' => out.push('”'),
+            '\'' => out.push('’'),
+            '`' => out.push('‘'),
+            '\\' => out.push('￥'),
+            '!'..='~' => out.push(char::from_u32(c as u32 + 0xFEE0).unwrap_or(c)),
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 /// True when the string contains at least one CJK ideograph (U+4E00..U+9FFF, U+3400..U+4DBF, 々).
 pub fn has_kanji(s: &str) -> bool {
-    s.chars()
-        .any(|c| matches!(c, '\u{4E00}'..='\u{9FFF}' | '\u{3400}'..='\u{4DBF}' | '々'))
+    s.chars().any(is_kanji_char)
 }
 
 /// Worker thread: owns COM initialization and the IME object.
@@ -77,8 +178,22 @@ fn worker(rx: Receiver<Request>, ready: Sender<bool>) {
     let _ = ready.send(ime.is_some());
     let Some(ime) = ime else { return };
 
+    let mut cache: HashMap<String, Option<String>> = HashMap::new();
     while let Ok((texts, reply)) = rx.recv() {
-        let out = texts.iter().map(|t| ime.reading(t)).collect();
+        if cache.len() > CACHE_LIMIT {
+            cache.clear();
+        }
+        let out = texts
+            .into_iter()
+            .map(|t| match cache.get(&t) {
+                Some(hit) => hit.clone(),
+                None => {
+                    let r = ime.reading(&t);
+                    cache.insert(t, r.clone());
+                    r
+                }
+            })
+            .collect();
         let _ = reply.send(out);
     }
     // `ime` drops before `_com` (reverse declaration order), so Close runs before CoUninitialize.
@@ -209,33 +324,68 @@ mod tests {
     }
 
     #[test]
+    fn segments_split() {
+        assert_eq!(
+            segments("2026_経理_見積書"),
+            vec![(false, "2026"), (true, "_"), (false, "経理"), (true, "_"), (false, "見積書")]
+        );
+        assert_eq!(segments("けいり"), vec![(false, "けいり")]);
+        assert!(segments("").is_empty());
+    }
+
+    fn make_names(n: usize) -> Vec<String> {
+        let words = [
+            "見積書", "請求書", "議事録", "経理", "報告書", "会議", "資料", "東京", "大阪",
+            "契約書", "年度", "第1四半期", "社内", "提案", "企画書", "打ち合わせ", "名簿",
+        ];
+        // Small deterministic LCG, no extra dependencies.
+        let mut s: u64 = 0x1234_5678;
+        let mut rnd = |m: usize| {
+            s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            ((s >> 33) as usize) % m
+        };
+        (0..n)
+            .map(|_| {
+                let parts = 1 + rnd(3);
+                let mut name = String::new();
+                match rnd(4) {
+                    0 => name.push_str(&format!("{}_", 2020 + rnd(7))),
+                    1 => name.push_str(&format!("{:04}{:02}{:02}_", 2020 + rnd(7), 1 + rnd(12), 1 + rnd(28))),
+                    2 => name.push_str("IMG_"),
+                    _ => {}
+                }
+                for p in 0..parts {
+                    if p > 0 {
+                        name.push(['_', '-', ' ', '（', '・', '.', '#', '$', '@', '\'', '~', '&', '(', ')', '+', ','][rnd(16)]);
+                    }
+                    name.push_str(words[rnd(words.len())]);
+                    if rnd(3) == 0 {
+                        name.push_str(&format!("{}", rnd(30)));
+                    }
+                }
+                match rnd(4) {
+                    0 => name.push_str(&format!("_v{}", rnd(10))),
+                    1 => name.push_str(&format!("({})", 1 + rnd(5))),
+                    2 => name.push_str("_最終"),
+                    _ => {}
+                }
+                name
+            })
+            .collect()
+    }
+
+    #[test]
     #[ignore]
-    fn throughput_2000_names() {
+    fn throughput_3000_names() {
         let Some(r) = Readings::new() else {
             println!("MS-IME not available; skipping");
             return;
         };
-        let base = [
-            "経理_2026年度_見積書",
-            "東京都_契約書",
-            "営業報告書_第3四半期",
-            "人事評価_山田太郎",
-            "請求書_株式会社東京商事",
-        ];
-        let names: Vec<String> = (0..2000)
-            .map(|i| format!("{}_{i}", base[i % base.len()]))
-            .collect();
+        let names = make_names(3000);
         let start = std::time::Instant::now();
         let out = r.readings(&names);
-        let elapsed = start.elapsed();
-        let ok = out.iter().filter(|o| o.is_some()).count();
-        println!(
-            "converted {} names in {:?} ({:.2} ms/name, {} ok)",
-            names.len(),
-            elapsed,
-            elapsed.as_secs_f64() * 1000.0 / names.len() as f64,
-            ok
-        );
+        let secs = start.elapsed().as_secs_f64();
+        println!("{:.0} names/s ({secs:.2}s)", names.len() as f64 / secs);
         assert_eq!(out.len(), names.len());
     }
 }

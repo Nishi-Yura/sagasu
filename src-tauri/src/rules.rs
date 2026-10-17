@@ -84,8 +84,13 @@ impl Rule {
         let (Some(parent), Some(name)) = (path.parent(), path.file_name().map(|n| n.to_string_lossy())) else {
             return false;
         };
-        if !same_dir(parent, Path::new(&self.folder)) || is_temporary(&name) || !path.is_file() {
+        if !same_dir(parent, Path::new(&self.folder)) || is_temporary(&name) {
             return false;
+        }
+        // Skip folders, and OneDrive "online-only" files: moving them would start a download.
+        match std::fs::metadata(path) {
+            Ok(md) if md.is_file() && !crate::index::FileMeta::from_metadata(&md).cloud => {}
+            _ => return false,
         }
         let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
         if !self.kinds.is_empty() && !self.kinds.iter().any(|k| k == category(&ext)) {

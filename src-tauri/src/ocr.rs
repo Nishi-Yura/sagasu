@@ -7,9 +7,8 @@ use windows::Graphics::Imaging::{
     ExifOrientationMode, SoftwareBitmap,
 };
 use windows::Media::Ocr::OcrEngine;
-use windows::Storage::{FileAccessMode, StorageFile};
+use windows::Storage::Streams::{DataWriter, InMemoryRandomAccessStream};
 use windows::Win32::System::WinRT::{RO_INIT_MULTITHREADED, RoInitialize};
-use windows::core::HSTRING;
 
 thread_local! {
     static WINRT_READY: Cell<bool> = const { Cell::new(false) };
@@ -68,15 +67,43 @@ fn engine() -> Result<OcrEngine> {
     })
 }
 
-fn recognize(engine: &OcrEngine, path: &Path) -> Result<String> {
-    let abs = std::path::absolute(path)
-        .with_context(|| format!("cannot resolve path {}", path.display()))?;
-    let abs_str = abs.to_str().context("path is not valid Unicode")?;
+/// Width and height from the file header for PNG, GIF and BMP (no decoding). `None` for other formats.
+fn header_dims(b: &[u8]) -> Option<(u32, u32)> {
+    let be = |i: usize| b.get(i..i + 4).map(|x| u32::from_be_bytes([x[0], x[1], x[2], x[3]]));
+    let le16 = |i: usize| b.get(i..i + 2).map(|x| u32::from(u16::from_le_bytes([x[0], x[1]])));
+    let le32 = |i: usize| b.get(i..i + 4).map(|x| i32::from_le_bytes([x[0], x[1], x[2], x[3]]).unsigned_abs());
+    if b.starts_with(b"\x89PNG\r\n\x1a\n") && b.get(12..16) == Some(b"IHDR") {
+        return Some((be(16)?, be(20)?));
+    }
+    if b.starts_with(b"GIF8") {
+        return Some((le16(6)?, le16(8)?));
+    }
+    if b.starts_with(b"BM") {
+        return Some((le32(18)?, le32(22)?));
+    }
+    None
+}
 
-    let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(abs_str))?.join()?;
-    let stream = file.OpenAsync(FileAccessMode::Read)?.join()?;
+fn recognize(engine: &OcrEngine, path: &Path) -> Result<String> {
+    // Reading the bytes ourselves avoids StorageFile, whose brokered open costs tens of
+    // milliseconds per file — more than recognizing a typical screenshot.
+    let bytes = std::fs::read(path).with_context(|| format!("cannot read {}", path.display()))?;
+    if let Some((w, h)) = header_dims(&bytes)
+        && (w < MIN_WIDTH || h < MIN_HEIGHT)
+    {
+        return Ok(String::new());
+    }
+    let stream = InMemoryRandomAccessStream::new()?;
+    let writer = DataWriter::CreateDataWriter(&stream)?;
+    writer.WriteBytes(&bytes)?;
+    writer.StoreAsync()?.join()?;
+    writer.DetachStream()?;
+    stream.Seek(0)?;
     let decoder = BitmapDecoder::CreateAsync(&stream)?.join()?;
-    let bitmap = decode_for_ocr(&decoder)?;
+    let jpeg = path.extension().is_some_and(|e| e.eq_ignore_ascii_case("jpg") || e.eq_ignore_ascii_case("jpeg"));
+    let Some(bitmap) = decode_for_ocr(&decoder, if jpeg { MAX_SIDE_JPEG } else { MAX_SIDE })? else {
+        return Ok(String::new());
+    };
     let result = engine.RecognizeAsync(&bitmap)?.join()?;
 
     let lines = result.Lines()?;
@@ -90,13 +117,27 @@ fn recognize(engine: &OcrEngine, path: &Path) -> Result<String> {
     Ok(out.join("\n"))
 }
 
-fn decode_for_ocr(decoder: &BitmapDecoder) -> Result<SoftwareBitmap> {
+/// Icons and thumbnails below this size almost never hold searchable text; skipping them is
+/// the biggest saving on PCs with many app or project assets.
+const MIN_WIDTH: u32 = 160;
+const MIN_HEIGHT: u32 = 90;
+/// Longest side used for recognition: keeps screenshot text legible while cutting the cost of large images.
+const MAX_SIDE: u32 = 3000;
+/// JPEGs are mostly camera photos: text in them (receipts, whiteboards) stays readable at this size,
+/// and recognizing a 12-megapixel photo at full size costs several times more.
+const MAX_SIDE_JPEG: u32 = 2000;
+
+/// `None` for images too small to be worth reading (the header is read, the pixels are not).
+fn decode_for_ocr(decoder: &BitmapDecoder, max_side: u32) -> Result<Option<SoftwareBitmap>> {
     let width = decoder.OrientedPixelWidth()?;
     let height = decoder.OrientedPixelHeight()?;
     if width == 0 || height == 0 {
         bail!("image has no pixels");
     }
-    let max = OcrEngine::MaxImageDimension()?.max(1);
+    if width < MIN_WIDTH || height < MIN_HEIGHT {
+        return Ok(None);
+    }
+    let max = OcrEngine::MaxImageDimension()?.clamp(1, max_side);
     let longest = width.max(height);
     let (w, h) = if longest > max {
         let scale =
@@ -118,7 +159,23 @@ fn decode_for_ocr(decoder: &BitmapDecoder) -> Result<SoftwareBitmap> {
             ColorManagementMode::DoNotColorManage,
         )?
         .join()?;
-    Ok(bitmap)
+    Ok(Some(bitmap))
+}
+
+#[cfg(test)]
+mod header_tests {
+    use super::header_dims;
+
+    #[test]
+    fn png_gif_bmp_headers() {
+        let mut png = b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR".to_vec();
+        png.extend_from_slice(&640u32.to_be_bytes());
+        png.extend_from_slice(&48u32.to_be_bytes());
+        assert_eq!(header_dims(&png), Some((640, 48)));
+        let gif = [b'G', b'I', b'F', b'8', b'9', b'a', 32, 0, 16, 0];
+        assert_eq!(header_dims(&gif), Some((32, 16)));
+        assert_eq!(header_dims(b"\xff\xd8\xff"), None);
+    }
 }
 
 fn is_cjk(c: char) -> bool {
