@@ -429,7 +429,8 @@ pub fn save_settings(app: AppHandle, engine: Eng<'_>, settings: Settings) -> Res
         r.map_err(|e| format!("自動起動の設定に失敗しました: {e}"))?;
     }
     let rescan = settings.roots != old.roots || settings.excludes != old.excludes || settings.show_hidden != old.show_hidden;
-    let content_on = settings.content_enabled && (!old.content_enabled || settings.content_max_mb != old.content_max_mb);
+    let content_on = settings.content_enabled
+        && (!old.content_enabled || settings.content_max_mb != old.content_max_mb || settings.content_code != old.content_code);
     engine.save_settings(settings).map_err(err)?;
     if rescan || content_on {
         engine.inner().rescan();

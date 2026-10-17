@@ -66,7 +66,7 @@ impl Db {
 
     /// Schema version stored in `PRAGMA user_version`. Bump it and add a step below
     /// whenever the tables change, so existing users' data is upgraded in place.
-    pub const SCHEMA_VERSION: i64 = 1;
+    pub const SCHEMA_VERSION: i64 = 2;
 
     fn migrate(&self) -> Result<()> {
         let c = self.conn()?;
@@ -79,7 +79,17 @@ impl Db {
         if current < 1 {
             Self::create_v1(&c)?;
         }
-        // Future steps go here: `if current < 2 { ... }`.
+        // v1 → v2: the file-name snapshot is stored WITHOUT ROWID, so each path is kept once instead of
+        // twice (table + primary-key index). It is only a startup cache, so it is rebuilt by the next scan.
+        if current < 2 {
+            c.execute_batch(
+                "DROP TABLE IF EXISTS files;
+                 CREATE TABLE files(path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime INTEGER NOT NULL, is_dir INTEGER NOT NULL) WITHOUT ROWID;",
+            )?;
+            // Let the file shrink when the full-text index drops documents (takes effect after one VACUUM).
+            c.execute_batch("PRAGMA auto_vacuum = INCREMENTAL; VACUUM;")?;
+        }
+        // Future steps go here: `if current < 3 { ... }`.
         c.execute_batch(&format!("PRAGMA user_version = {}", Self::SCHEMA_VERSION))?;
         Ok(())
     }
@@ -115,7 +125,7 @@ impl Db {
         Ok(rows)
     }
 
-    pub fn save_snapshot<'a>(&self, rows: impl Iterator<Item = (&'a str, u64, i64, bool)>) -> Result<()> {
+    pub fn save_snapshot(&self, rows: impl Iterator<Item = (String, u64, i64, bool)>) -> Result<()> {
         let mut c = self.conn()?;
         let tx = c.transaction()?;
         tx.execute("DELETE FROM files", [])?;
@@ -123,6 +133,7 @@ impl Db {
             let mut st = tx.prepare("INSERT OR REPLACE INTO files(path, size, mtime, is_dir) VALUES(?1, ?2, ?3, ?4)")?;
             for (p, s, m, d) in rows {
                 st.execute(params![p, s as i64, m, d as i64])?;
+                // Each path string is dropped right after insertion, so a 1M-entry save needs no extra copy.
             }
         }
         tx.commit()?;
@@ -153,6 +164,12 @@ impl Db {
     pub fn remove_content(&self, c: &Connection, path: &str) -> Result<()> {
         c.execute("DELETE FROM content_fts WHERE path = ?1", [path])?;
         c.execute("DELETE FROM content_meta WHERE path = ?1", [path])?;
+        Ok(())
+    }
+
+    /// Returns free pages to the OS after large deletions.
+    pub fn shrink(&self) -> Result<()> {
+        self.conn()?.execute_batch("PRAGMA incremental_vacuum;")?;
         Ok(())
     }
 

@@ -8,7 +8,7 @@
 **散らかったフォルダは、プレビューしてから安全に片付く。**
 
 [![Windows 10 | 11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)](#-ダウンロードとインストール)
-[![Version](https://img.shields.io/badge/version-0.2.0-2563eb)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.2.1-2563eb)](CHANGELOG.md)
 [![Built with Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app/)
 [![Rust](https://img.shields.io/badge/Rust-stable-CE422B?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-16a34a)](LICENSE)

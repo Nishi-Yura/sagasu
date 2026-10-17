@@ -221,8 +221,9 @@ impl Index {
         self.entries.iter().enumerate().filter(|(_, e)| e.alive).map(|(i, e)| (self.full_path(i), e))
     }
 
-    pub fn snapshot_rows(&self) -> Vec<(String, u64, i64, bool)> {
-        self.rows().map(|(p, e)| (p, e.size, e.mtime, e.is_dir)).collect()
+    /// Rows for the startup snapshot, produced one at a time (no full copy of every path).
+    pub fn snapshot_iter(&self) -> impl Iterator<Item = (String, u64, i64, bool)> + '_ {
+        self.rows().map(|(p, e)| (p, e.size, e.mtime, e.is_dir))
     }
 
     pub fn content_candidates(&self, max_size: u64, supported: impl Fn(&str) -> bool) -> Vec<ContentCandidate> {
@@ -346,7 +347,8 @@ fn term_score(name: &str, dir: &str, t: &str) -> Option<i32> {
         let prev = name[..pos].chars().next_back().unwrap_or(' ');
         return Some(if is_boundary(prev) { 75 } else { 55 });
     }
-    if dir.contains(t) {
+    // A single character would match nearly every folder path, so it only counts in names.
+    if t.chars().nth(1).is_some() && dir.contains(t) {
         return Some(25);
     }
     if t.chars().count() >= 3 {
@@ -503,6 +505,14 @@ mod tests {
         assert_eq!(h[0].name, "report_2026.pdf");
         let (_, n) = ix.search(&parse("type:folder"), 10, &HashMap::new(), 0);
         assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn single_char_matches_names_only() {
+        let ix = sample();
+        // "o" appears in the folder "Documents" but only report_*.pdf / memo have it in the name.
+        let (h, _) = ix.search(&parse("o"), 10, &HashMap::new(), 0);
+        assert!(h.iter().all(|x| x.name.to_lowercase().contains('o')), "{h:?}");
     }
 
     #[test]

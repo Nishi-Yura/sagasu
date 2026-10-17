@@ -138,11 +138,11 @@ impl Engine {
         let rows = scan(&roots, &ex, hidden, &self.status.scan_progress);
         log::info!("scanned {} entries in {:?}", rows.len(), t.elapsed());
         let ix = Index::from_rows(rows.into_iter());
-        let snapshot = ix.snapshot_rows();
         *self.index.write() = ix;
         self.status.scanning.store(false, Ordering::Relaxed);
         self.status.last_scan.store(chrono::Utc::now().timestamp(), Ordering::Relaxed);
-        if let Err(e) = self.db.save_snapshot(snapshot.iter().map(|(p, s, m, d)| (p.as_str(), *s, *m, *d))) {
+        // Readers keep searching while the snapshot is written; watcher updates wait for it.
+        if let Err(e) = self.db.save_snapshot(self.index.read().snapshot_iter()) {
             log::warn!("snapshot save failed: {e}");
         }
         self.restart_watcher(&roots);
@@ -259,19 +259,20 @@ impl Engine {
         }
     }
 
-    fn content_limits(&self) -> (bool, u64) {
+    /// (enabled, max file size, include source code / logs)
+    fn content_limits(&self) -> (bool, u64, bool) {
         let s = self.settings.read();
-        (s.content_enabled, s.content_max_mb * 1024 * 1024)
+        (s.content_enabled, s.content_max_mb * 1024 * 1024, s.content_code)
     }
 
     fn content_one(&self, path: &str) -> anyhow::Result<()> {
-        let (enabled, max) = self.content_limits();
+        let (enabled, max, code) = self.content_limits();
         if !enabled {
             return Ok(());
         }
         let Some(hit) = self.index.read().hit_for_path(path) else { return Ok(()) };
         let ext = ext_of(&normalize(&hit.name)).to_string();
-        if hit.is_dir || hit.cloud || hit.size > max || !extract::is_supported(&ext) {
+        if hit.is_dir || hit.cloud || hit.size > max || !extract::should_index(&ext, code) {
             return Ok(());
         }
         let c = self.db.conn()?;
@@ -280,21 +281,27 @@ impl Engine {
     }
 
     fn content_full_pass(&self, rx: &Receiver<ContentMsg>) -> anyhow::Result<()> {
-        let (enabled, max) = self.content_limits();
+        let (enabled, max, code) = self.content_limits();
         if !enabled {
             return Ok(());
         }
         let stored = self.db.content_mtimes()?;
-        let candidates = self.index.read().content_candidates(max, extract::is_supported);
+        let candidates = self.index.read().content_candidates(max, |e| extract::should_index(e, code));
         let live: HashSet<&str> = candidates.iter().map(|c| c.path.as_str()).collect();
         let todo: Vec<_> = candidates.iter().filter(|c| stored.get(&c.path) != Some(&c.mtime)).collect();
         let mut c = self.db.conn()?;
         {
             let tx = c.transaction()?;
+            let mut removed = 0usize;
             for p in stored.keys().filter(|p| !live.contains(p.as_str())) {
                 self.db.remove_content(&tx, p)?;
+                removed += 1;
             }
             tx.commit()?;
+            if removed > 0 {
+                log::info!("removed {removed} documents from the full-text index");
+                let _ = self.db.shrink();
+            }
         }
         self.status.content_total.store(todo.len() as u64, Ordering::Relaxed);
         self.status.content_done.store(0, Ordering::Relaxed);

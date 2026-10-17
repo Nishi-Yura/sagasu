@@ -695,6 +695,7 @@ async function loadSettings() {
     $("#show-hidden").checked = s.show_hidden;
     $("#content-enabled").checked = s.content_enabled;
     $("#content-max").value = s.content_max_mb;
+    $("#content-code").checked = s.content_code;
     $("#hotkey").value = s.hotkey;
     $("#autostart").checked = s.autostart;
     $("#check-updates").checked = s.check_updates;
@@ -742,6 +743,7 @@ $("#settings-save").addEventListener("click", async () => {
     excludes: $("#excludes").value.split("\n").map((x) => x.trim()).filter(Boolean),
     show_hidden: $("#show-hidden").checked,
     content_enabled: $("#content-enabled").checked,
+    content_code: $("#content-code").checked,
     content_max_mb: Math.max(1, Number($("#content-max").value) || 30),
     hotkey: hk.value.trim(),
     autostart: $("#autostart").checked,

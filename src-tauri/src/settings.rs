@@ -14,6 +14,8 @@ pub struct Settings {
     pub content_enabled: bool,
     /// Skip content extraction for files larger than this.
     pub content_max_mb: u64,
+    /// Also index source code, logs and config files (off: documents only).
+    pub content_code: bool,
     pub hotkey: String,
     pub autostart: bool,
     pub show_hidden: bool,
@@ -28,6 +30,7 @@ impl Default for Settings {
             excludes: default_excludes(),
             content_enabled: true,
             content_max_mb: 30,
+            content_code: false,
             hotkey: "Alt+Space".into(),
             autostart: false,
             show_hidden: false,

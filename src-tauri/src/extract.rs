@@ -22,6 +22,19 @@ const PLAIN_TEXT_EXTS: &[&str] = &[
 
 const OFFICE_EXTS: &[&str] = &["docx", "pptx", "xlsx", "xlsm", "xls", "ods", "odt", "pdf"];
 
+/// Everyday documents. Source code, logs and config files are only indexed when the user opts in:
+/// on a developer's PC they are most of the text and would bury the documents people look for.
+const DOCUMENT_EXTS: &[&str] = &["txt", "md", "markdown", "csv", "tsv", "html", "htm"];
+
+/// Plain-text files keep less text than office documents: long ones are usually data dumps.
+const MAX_PLAIN_CHARS: usize = 100_000;
+
+/// Whether `ext` should get full-text indexing under the user's settings.
+pub fn should_index(ext: &str, include_code: bool) -> bool {
+    let ext = ext.to_ascii_lowercase();
+    OFFICE_EXTS.contains(&ext.as_str()) || DOCUMENT_EXTS.contains(&ext.as_str()) || (include_code && is_supported(&ext))
+}
+
 /// Extensions (lowercase, no dot) whose text content we can index.
 pub fn is_supported(ext: &str) -> bool {
     let ext = ext.to_ascii_lowercase();
@@ -51,7 +64,8 @@ pub fn extract_text(path: &Path, max_chars: usize) -> Result<Option<String>> {
     };
 
     let text = normalize_text(&raw);
-    Ok(Some(truncate_chars(text, max_chars)))
+    let limit = if OFFICE_EXTS.contains(&ext.as_str()) { max_chars } else { max_chars.min(MAX_PLAIN_CHARS) };
+    Ok(Some(truncate_chars(text, limit)))
 }
 
 fn read_plain(path: &Path) -> Result<String> {
@@ -525,6 +539,25 @@ mod tests {
         let path = write_file(dir.path(), "raw.txt", &[b'a', 0xFF, 0xFE, b'b']);
         let text = extract_text(&path, 100).unwrap().unwrap();
         assert!(text.starts_with('a') && text.ends_with('b'));
+    }
+
+    #[test]
+    fn documents_only_by_default() {
+        for e in ["docx", "PDF", "xlsx", "txt", "md", "csv"] {
+            assert!(should_index(e, false), "{e}");
+        }
+        for e in ["cs", "log", "json", "js"] {
+            assert!(!should_index(e, false), "{e} is off by default");
+            assert!(should_index(e, true), "{e} with code on");
+        }
+        assert!(!should_index("exe", true));
+    }
+
+    #[test]
+    fn plain_text_is_capped() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_file(dir.path(), "big.txt", "あ".repeat(150_000).as_bytes());
+        assert_eq!(extract_text(&path, 300_000).unwrap().unwrap().chars().count(), MAX_PLAIN_CHARS);
     }
 
     #[test]

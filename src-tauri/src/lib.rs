@@ -62,6 +62,8 @@ pub fn run() {
                 .target(tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir { file_name: Some("sagasu".into()) }))
                 .target(tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout))
                 .level(log::LevelFilter::Info)
+                // The PDF parser warns about every slightly malformed file; keep only its errors.
+                .level_for("lopdf", log::LevelFilter::Error)
                 .max_file_size(2_000_000)
                 .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepOne)
                 .timezone_strategy(tauri_plugin_log::TimezoneStrategy::UseLocal)
