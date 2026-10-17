@@ -8,7 +8,7 @@
 **散らかったフォルダは、プレビューしてから安全に片付く。**
 
 [![Windows 10 | 11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)](#-ダウンロードとインストール)
-[![Version](https://img.shields.io/badge/version-0.5.0-2563eb)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-1.0.0-2563eb)](CHANGELOG.md)
 [![Built with Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app/)
 [![Rust](https://img.shields.io/badge/Rust-stable-CE422B?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-16a34a)](LICENSE)
@@ -115,7 +115,7 @@
 3. 起動するとファイルの一覧づくりが始まります。数十秒〜数分で検索できるようになります
 
 > [!TIP]
-> **v0.1.0 をお使いの方へ：** v0.1.0 には自動アップデート機能がないため、v0.5.0 は上の手順で一度手動でインストールしてください。以降は、新しいバージョンが出ると画面下のボタンから自動で更新できます。
+> **v0.1.0 をお使いの方へ：** v0.1.0 には自動アップデート機能がないため、最新版を上の手順で一度手動でインストールしてください。以降は、新しいバージョンが出ると画面下のボタンから自動で更新できます。
 
 > [!NOTE]
 > Sagasu は電子署名をしていないため、初回に「Windows によって PC が保護されました」と表示されることがあります。

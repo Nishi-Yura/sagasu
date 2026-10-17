@@ -1,6 +1,6 @@
 [package]
 name = "sagasu"
-version = "0.5.0"
+version = "1.0.0"
 description = "Sagasu - 名前でも中身でも、すぐ見つかる。安全に片付くファイル検索ツール"
 authors = ["Nishi-Yura"]
 license = "MIT"
