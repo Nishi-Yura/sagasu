@@ -12,10 +12,6 @@
       <svg class="search-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.5 15.5 21 21"/></svg>
       <input id="q" type="text" autocomplete="off" spellcheck="false"
              placeholder="ファイル名・中身で検索（例: 見積 ext:pdf 先月）" aria-label="検索" />
-      <button id="ai-toggle" class="ai-toggle" type="button" title="文章で探す（AI）  Ctrl+I" aria-pressed="false">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/></svg>
-        <span>AIで探す</span>
-      </button>
     </div>
     <nav class="tabs" role="tablist">
       <button class="tab active" data-view="search" role="tab">検索</button>
@@ -59,10 +55,6 @@
             <button class="btn preset" data-preset="by_year_month">年/月別<small>2026\10 …</small></button>
             <button class="btn preset" data-preset="by_year">年別<small>2025・2026 …</small></button>
             <button class="btn preset" data-preset="by_extension">拡張子別<small>PDF・XLSX …</small></button>
-          </div>
-          <div class="ai-box">
-            <textarea id="org-instruction" rows="2" placeholder="AIへの指示（例: 請求書と見積書を取引先ごとに分けて、写真は年別にして）"></textarea>
-            <button id="org-ai" class="btn primary">AIに整理案を作ってもらう</button>
           </div>
         </div>
 
@@ -156,23 +148,14 @@
         </div>
 
         <div class="card">
-          <div class="step-title">AI（Claude）</div>
-          <p class="hint">「AIで探す」と「AI整理」に使います。送るのはファイル名・場所・日付・サイズだけで、ファイルの中身は送りません。</p>
+          <div class="step-title">アップデートとサポート</div>
+          <label class="check"><input type="checkbox" id="check-updates" /> 起動時に新しいバージョンがあるか確認する（GitHub に問い合わせます）</label>
           <div class="row">
-            <input id="api-key" type="password" placeholder="Anthropic APIキー（sk-ant-…）" spellcheck="false" autocomplete="off" />
-            <button id="api-save" class="btn">保存</button>
-            <button id="api-test" class="btn">接続テスト</button>
+            <button id="update-check" class="btn">今すぐ確認</button>
+            <button id="open-logs" class="btn">ログフォルダを開く</button>
+            <span id="update-state" class="hint"></span>
           </div>
-          <div id="api-state" class="hint"></div>
-          <div class="row">
-            <span>モデル</span>
-            <select id="model">
-              <option value="claude-opus-5-5">Claude Opus 5.5（高精度・おすすめ）</option>
-              <option value="claude-sonnet-5-5">Claude Sonnet 5.5（速い・安い）</option>
-              <option value="claude-haiku-5-5">Claude Haiku 5.5（最速・最安）</option>
-            </select>
-          </div>
-          <div class="hint">APIキーは <a href="#" data-href="https://console.anthropic.com/">console.anthropic.com</a> で発行できます。キーは Windows の資格情報マネージャーに保存されます。</div>
+          <div class="hint">不具合を報告するときは、ログフォルダの <code>sagasu.log</code> を添付してもらえると原因を調べやすくなります。</div>
         </div>
 
         <div class="actions sticky">
@@ -186,6 +169,7 @@
 
   <footer class="statusbar">
     <span id="status">準備中…</span>
+    <button id="update-pill" class="update-pill" hidden></button>
     <span class="keys"><kbd>Enter</kbd> 開く <kbd>Ctrl</kbd>+<kbd>Enter</kbd> 場所を開く <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> パスをコピー <kbd>Esc</kbd> 閉じる</span>
   </footer>
 

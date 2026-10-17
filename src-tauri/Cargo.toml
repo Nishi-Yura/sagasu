@@ -1,7 +1,7 @@
 [package]
 name = "sagasu"
-version = "0.1.0"
-description = "Sagasu - 名前でも中身でも、すぐ見つかる。AIで片付くファイル検索ツール"
+version = "0.2.0"
+description = "Sagasu - 名前でも中身でも、すぐ見つかる。安全に片付くファイル検索ツール"
 authors = ["Nishi-Yura"]
 license = "MIT"
 repository = "https://github.com/Nishi-Yura/sagasu"
@@ -17,14 +17,12 @@ calamine = "0.36.1"
 chrono = "0.4.45"
 dirs = "7.0.0"
 encoding_rs = "0.8.42"
-keyring = { version = "3", features = ["windows-native"] }
 log = "0.4.34"
 lopdf = "0.45.0"
 notify = "8.2.0"
 parking_lot = "0.12.5"
 quick-xml = "0.42.0"
 rayon = "1.12.0"
-reqwest = { version = "0.13.5", default-features = false, features = ["json", "blocking", "rustls"] }
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
@@ -32,8 +30,10 @@ tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-global-shortcut = "2"
+tauri-plugin-log = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2"
 trash = "5.2.9"
 unicode-normalization = "0.1.25"
 wana_kana = "5.0.0"

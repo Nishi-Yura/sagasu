@@ -7,13 +7,12 @@ use std::sync::Arc;
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 
-use crate::ai::{self, AiSearch};
 use crate::db::{HistoryItem, Pin};
 use crate::engine::{Engine, StatusView};
 use crate::index::Hit;
 use crate::normalize::normalize;
 use crate::organize::{self, Plan, Preset};
-use crate::query::{self, Filter, Kind};
+use crate::query::{self, Filter};
 use crate::settings::{self, Settings};
 
 type Res<T> = Result<T, String>;
@@ -112,86 +111,6 @@ pub async fn search_content(engine: Eng<'_>, query: String, limit: Option<usize>
     }
     let engine = engine.inner().clone();
     blocking(move || content_results(&engine, &f.raw_terms, &f, limit.unwrap_or(40))).await
-}
-
-#[derive(Serialize)]
-pub struct AiSearchResult {
-    pub parsed: AiSearch,
-    pub items: Vec<Hit>,
-    pub content: Vec<ContentResult>,
-}
-
-fn base_filter(p: &AiSearch) -> Filter {
-    let date = |s: &str| {
-        chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok().and_then(|d| {
-            use chrono::TimeZone;
-            chrono::Local.from_local_datetime(&d.and_hms_opt(0, 0, 0)?).earliest().map(|t| t.timestamp())
-        })
-    };
-    Filter {
-        exts: p.extensions.iter().map(|e| e.trim_start_matches('.').to_lowercase()).collect(),
-        path_contains: p.folder_hints.iter().map(|h| normalize(h)).filter(|h| !h.is_empty()).collect(),
-        after: date(&p.modified_after),
-        before: date(&p.modified_before),
-        kind: match p.kind.as_str() {
-            "file" => Kind::File,
-            "folder" => Kind::Folder,
-            _ => Kind::Any,
-        },
-        ..Default::default()
-    }
-}
-
-#[tauri::command]
-pub async fn ai_search(engine: Eng<'_>, text: String) -> Res<AiSearchResult> {
-    let key = settings::api_key().ok_or("AI検索を使うには、設定で Anthropic の APIキーを登録してください。")?;
-    let model = engine.settings.read().model.clone();
-    let engine = engine.inner().clone();
-    blocking(move || {
-        let parsed = ai::parse_search(&key, &model, &text)?;
-        let base = base_filter(&parsed);
-        let opens = engine.opens.read().clone();
-        let mut merged: HashMap<String, Hit> = HashMap::new();
-        {
-            let ix = engine.index.read();
-            if parsed.name_keywords.is_empty() {
-                if !base.is_empty() {
-                    for h in ix.search(&base, 100, &opens, now()).0 {
-                        merged.insert(h.path.clone(), h);
-                    }
-                }
-            } else {
-                // Any one name keyword may match; files matching several rank higher.
-                for k in &parsed.name_keywords {
-                    let mut f = base.clone();
-                    f.add_term(k);
-                    for h in ix.search(&f, 60, &opens, now()).0 {
-                        merged.entry(h.path.clone()).and_modify(|e| e.score += h.score).or_insert(h);
-                    }
-                }
-            }
-        }
-        let mut items: Vec<Hit> = merged.into_values().collect();
-        items.sort_by(|a, b| b.score.cmp(&a.score).then(b.mtime.cmp(&a.mtime)));
-        items.truncate(100);
-        let kws: Vec<String> = parsed.content_keywords.iter().filter(|k| !k.trim().is_empty()).cloned().collect();
-        let mut content = Vec::new();
-        if !kws.is_empty() {
-            content = content_results(&engine, &kws, &base, 40)?;
-            if content.is_empty() && kws.len() > 1 {
-                let mut seen = std::collections::HashSet::new();
-                for k in &kws {
-                    for r in content_results(&engine, std::slice::from_ref(k), &base, 20)? {
-                        if seen.insert(r.path.clone()) {
-                            content.push(r);
-                        }
-                    }
-                }
-            }
-        }
-        Ok(AiSearchResult { parsed, items, content })
-    })
-    .await
 }
 
 #[tauri::command]
@@ -343,23 +262,6 @@ pub async fn organize_preset(root: String, preset: Preset, recursive: bool) -> R
     blocking(move || organize::preset_plan(Path::new(&root), preset, recursive)).await
 }
 
-#[tauri::command]
-pub async fn organize_ai(engine: Eng<'_>, root: String, instruction: String, recursive: bool) -> Res<Plan> {
-    let key = settings::api_key().ok_or("AI整理を使うには、設定で Anthropic の APIキーを登録してください。プリセット整理はAIなしで使えます。")?;
-    let model = engine.settings.read().model.clone();
-    if instruction.trim().is_empty() {
-        return Err("どう整理したいかを入力してください".into());
-    }
-    blocking(move || {
-        let files = organize::list_files(Path::new(&root), recursive)?;
-        if files.is_empty() {
-            anyhow::bail!("整理するファイルがありません");
-        }
-        ai::plan_organize(&key, &model, &root, &instruction, &files)
-    })
-    .await
-}
-
 #[derive(Serialize)]
 pub struct ApplyResult {
     pub history_id: Option<i64>,
@@ -434,23 +336,78 @@ pub fn trash_path(engine: Eng<'_>, path: String) -> Res<()> {
     Ok(())
 }
 
+// ---------------- updates ----------------
+
+#[derive(Serialize)]
+pub struct UpdateInfo {
+    pub version: String,
+    pub current: String,
+    pub notes: Option<String>,
+}
+
+fn update_err(e: impl std::fmt::Display) -> String {
+    log::warn!("update: {e}");
+    format!("更新を確認できませんでした（インターネット接続を確認してください）: {e}")
+}
+
+fn updater(app: &AppHandle) -> Res<tauri_plugin_updater::Updater> {
+    use tauri_plugin_updater::UpdaterExt;
+    let mut b = app.updater_builder();
+    // Debug builds can point at a local test server: SAGASU_UPDATE_URL=http://127.0.0.1:8765/latest.json
+    if cfg!(debug_assertions)
+        && let Ok(url) = std::env::var("SAGASU_UPDATE_URL")
+    {
+        b = b.endpoints(vec![url.parse().map_err(update_err)?]).map_err(update_err)?;
+    }
+    b.build().map_err(update_err)
+}
+
+/// Asks GitHub Releases for a newer version. `None` means up to date.
+#[tauri::command]
+pub async fn check_update(app: AppHandle) -> Res<Option<UpdateInfo>> {
+    let update = updater(&app)?.check().await.map_err(update_err)?;
+    Ok(update.map(|u| UpdateInfo { version: u.version.clone(), current: u.current_version.clone(), notes: u.body.clone() }))
+}
+
+/// Downloads the signed installer, runs it, and restarts Sagasu.
+#[tauri::command]
+pub async fn install_update(app: AppHandle) -> Res<()> {
+    let Some(update) = updater(&app)?.check().await.map_err(update_err)? else {
+        return Err("すでに最新版です".into());
+    };
+    log::info!("installing update {} → {}", update.current_version, update.version);
+    update.download_and_install(|_, _| {}, || {}).await.map_err(|e| {
+        log::error!("update install failed: {e}");
+        format!("更新をインストールできませんでした: {e}")
+    })?;
+    app.restart();
+}
+
+#[tauri::command]
+pub fn open_log_folder(app: AppHandle) -> Res<()> {
+    let dir = app.path().app_log_dir().map_err(err)?;
+    std::fs::create_dir_all(&dir).map_err(err)?;
+    std::process::Command::new("explorer.exe").arg(&dir).spawn().map_err(err)?;
+    Ok(())
+}
+
 // ---------------- settings ----------------
 
 #[derive(Serialize)]
 pub struct SettingsView {
     pub settings: Settings,
-    pub has_api_key: bool,
     pub default_excludes: Vec<String>,
     pub version: String,
+    pub data_version: i64,
 }
 
 #[tauri::command]
 pub fn get_settings(app: AppHandle, engine: Eng<'_>) -> SettingsView {
     SettingsView {
         settings: engine.settings.read().clone(),
-        has_api_key: settings::api_key().is_some(),
         default_excludes: settings::default_excludes(),
         version: app.package_info().version.to_string(),
+        data_version: engine.db.schema_version().unwrap_or(0),
     }
 }
 
@@ -478,18 +435,6 @@ pub fn save_settings(app: AppHandle, engine: Eng<'_>, settings: Settings) -> Res
         engine.inner().rescan();
     }
     Ok(())
-}
-
-#[tauri::command]
-pub fn set_api_key(key: String) -> Res<()> {
-    settings::set_api_key(&key).map_err(err)
-}
-
-#[tauri::command]
-pub async fn test_api_key(engine: Eng<'_>, key: Option<String>) -> Res<()> {
-    let key = key.filter(|k| !k.trim().is_empty()).or_else(settings::api_key).ok_or("APIキーが未登録です")?;
-    let model = engine.settings.read().model.clone();
-    blocking(move || ai::test_key(key.trim(), &model)).await
 }
 
 #[tauri::command]

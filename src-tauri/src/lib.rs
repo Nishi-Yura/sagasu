@@ -1,4 +1,3 @@
-mod ai;
 mod commands;
 mod db;
 mod dupes;
@@ -49,8 +48,26 @@ pub fn set_hotkey(app: &AppHandle, hotkey: &str) -> anyhow::Result<()> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let started_hidden = std::env::args().any(|a| a == "--hidden");
+    // Panics would otherwise vanish in a windowed release build; put them in the log file.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        log::error!("panic: {info}");
+        default_hook(info);
+    }));
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .clear_targets()
+                .target(tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir { file_name: Some("sagasu".into()) }))
+                .target(tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout))
+                .level(log::LevelFilter::Info)
+                .max_file_size(2_000_000)
+                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepOne)
+                .timezone_strategy(tauri_plugin_log::TimezoneStrategy::UseLocal)
+                .build(),
+        )
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, _shortcut, event| {
@@ -64,6 +81,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, Some(vec!["--hidden"])))
         .setup(move |app| {
+            log::info!("Sagasu {} starting", app.package_info().version);
             let data_dir = app.path().app_data_dir()?;
             let engine = engine::Engine::new(&data_dir)?;
             engine.start();
@@ -114,7 +132,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::search,
             commands::search_content,
-            commands::ai_search,
             commands::recent,
             commands::open_path,
             commands::reveal_path,
@@ -126,16 +143,16 @@ pub fn run() {
             commands::remove_pin,
             commands::organize_inspect,
             commands::organize_preset,
-            commands::organize_ai,
             commands::organize_apply,
             commands::history,
             commands::undo,
             commands::find_duplicates,
             commands::trash_path,
+            commands::check_update,
+            commands::install_update,
+            commands::open_log_folder,
             commands::get_settings,
             commands::save_settings,
-            commands::set_api_key,
-            commands::test_api_key,
             commands::hide_window,
         ])
         .run(tauri::generate_context!())

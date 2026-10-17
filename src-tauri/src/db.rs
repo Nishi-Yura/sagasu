@@ -64,8 +64,32 @@ impl Db {
         Ok(c)
     }
 
+    /// Schema version stored in `PRAGMA user_version`. Bump it and add a step below
+    /// whenever the tables change, so existing users' data is upgraded in place.
+    pub const SCHEMA_VERSION: i64 = 1;
+
     fn migrate(&self) -> Result<()> {
-        self.conn()?.execute_batch(
+        let c = self.conn()?;
+        let current: i64 = c.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+        if current > Self::SCHEMA_VERSION {
+            log::warn!("database schema v{current} is newer than this app (v{}); continuing read-compatible", Self::SCHEMA_VERSION);
+            return Ok(());
+        }
+        // v0 → v1: the original tables. `IF NOT EXISTS` also adopts databases made by v0.1.0, which had no version.
+        if current < 1 {
+            Self::create_v1(&c)?;
+        }
+        // Future steps go here: `if current < 2 { ... }`.
+        c.execute_batch(&format!("PRAGMA user_version = {}", Self::SCHEMA_VERSION))?;
+        Ok(())
+    }
+
+    pub fn schema_version(&self) -> Result<i64> {
+        Ok(self.conn()?.query_row("PRAGMA user_version", [], |r| r.get(0))?)
+    }
+
+    fn create_v1(c: &Connection) -> Result<()> {
+        c.execute_batch(
             "CREATE TABLE IF NOT EXISTS files(path TEXT PRIMARY KEY, size INTEGER NOT NULL, mtime INTEGER NOT NULL, is_dir INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS content_meta(path TEXT PRIMARY KEY, mtime INTEGER NOT NULL, size INTEGER NOT NULL);
              CREATE VIRTUAL TABLE IF NOT EXISTS content_fts USING fts5(path UNINDEXED, body, tokenize='trigram');
@@ -330,6 +354,24 @@ mod tests {
         let h = db.history_item(id).unwrap().unwrap();
         assert!(h.undone);
         assert_eq!(h.moves.len(), 1);
+    }
+
+    #[test]
+    fn schema_version_and_legacy_adoption() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("old.db");
+        // A v0.1.0 database: tables exist, user_version is 0, and it holds a pin.
+        {
+            let c = Connection::open(&path).unwrap();
+            c.execute_batch("CREATE TABLE pins(alias TEXT PRIMARY KEY, path TEXT NOT NULL, created INTEGER NOT NULL);
+                             INSERT INTO pins VALUES('経理', 'C:/x', 1);").unwrap();
+        }
+        let db = Db::open(&path).unwrap();
+        assert_eq!(db.schema_version().unwrap(), Db::SCHEMA_VERSION);
+        assert_eq!(db.pins().unwrap().len(), 1, "existing data survives the upgrade");
+        // Opening again is a no-op.
+        let db = Db::open(&path).unwrap();
+        assert_eq!(db.schema_version().unwrap(), Db::SCHEMA_VERSION);
     }
 
     #[test]

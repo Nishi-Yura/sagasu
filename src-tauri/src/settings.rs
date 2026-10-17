@@ -2,9 +2,6 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-pub const DEFAULT_MODEL: &str = "claude-opus-5-5";
-const KEYRING_SERVICE: &str = "jp.sagasu.app";
-const KEYRING_USER: &str = "anthropic-api-key";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -18,9 +15,10 @@ pub struct Settings {
     /// Skip content extraction for files larger than this.
     pub content_max_mb: u64,
     pub hotkey: String,
-    pub model: String,
     pub autostart: bool,
     pub show_hidden: bool,
+    /// Look for a new version on GitHub at startup.
+    pub check_updates: bool,
 }
 
 impl Default for Settings {
@@ -31,9 +29,9 @@ impl Default for Settings {
             content_enabled: true,
             content_max_mb: 30,
             hotkey: "Alt+Space".into(),
-            model: DEFAULT_MODEL.into(),
             autostart: false,
             show_hidden: false,
+            check_updates: true,
         }
     }
 }
@@ -95,29 +93,6 @@ impl Settings {
     pub fn root_paths(&self) -> Vec<PathBuf> {
         self.roots.iter().map(PathBuf::from).filter(|p| p.exists()).collect()
     }
-}
-
-fn entry() -> keyring::Result<keyring::Entry> {
-    keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)
-}
-
-pub fn api_key() -> Option<String> {
-    if let Ok(k) = std::env::var("ANTHROPIC_API_KEY")
-        && !k.trim().is_empty()
-    {
-        return Some(k);
-    }
-    entry().ok()?.get_password().ok().filter(|k| !k.trim().is_empty())
-}
-
-pub fn set_api_key(key: &str) -> anyhow::Result<()> {
-    let e = entry()?;
-    if key.trim().is_empty() {
-        let _ = e.delete_credential();
-    } else {
-        e.set_password(key.trim())?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]

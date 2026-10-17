@@ -173,27 +173,13 @@ $$(".tab").forEach((t) => t.addEventListener("click", () => showView(t.dataset.v
 
 const q = $("#q");
 const resultsEl = $("#results");
-let aiMode = false;
 let items = []; // flat list of selectable rows: {type, path, hit?}
 let sel = 0;
 let searchSeq = 0;
 let nameTimer, contentTimer;
 let lastWords = [];
 
-function setAiMode(on) {
-  aiMode = on;
-  $("#ai-toggle").setAttribute("aria-pressed", String(on));
-  $("#searchbar").classList.toggle("ai", on);
-  q.placeholder = on
-    ? "探しているファイルを文章で（例: 去年A社に出した保守費用の見積もり）→ Enter"
-    : "ファイル名・中身で検索（例: 見積 ext:pdf 先月）";
-  q.focus();
-  q.dataset.dirty = "1";
-  runSearch();
-}
-$("#ai-toggle").addEventListener("click", () => setAiMode(!aiMode));
-
-const state = { pins: [], names: null, content: null, ai: null, aiLoading: false, recent: null };
+const state = { pins: [], names: null, content: null, recent: null };
 
 function render() {
   const parts = [];
@@ -218,36 +204,7 @@ function render() {
     }
   }
 
-  if (aiMode) {
-    if (state.aiLoading) {
-      parts.push(`<div class="empty-note"><span class="spinner"></span>AI が探し方を考えています…</div>`);
-    } else if (state.ai) {
-      const p = state.ai.parsed;
-      const tags = [
-        ...p.name_keywords.map((k) => `名前: ${k}`),
-        ...p.content_keywords.map((k) => `中身: ${k}`),
-        ...p.extensions.map((e) => `.${e}`),
-        p.modified_after || p.modified_before ? `期間: ${p.modified_after || "…"} 〜 ${p.modified_before || "…"}` : "",
-        ...p.folder_hints.map((f) => `場所: ${f}`),
-      ].filter(Boolean);
-      parts.push(`<div class="ai-note">${esc(p.explanation)}<div class="tags">${tags.map((t) => `<span class="tag">${esc(t)}</span>`).join("")}</div></div>`);
-      if (state.ai.content.length) {
-        parts.push(`<div class="section-head"><span>中身に一致</span><span class="meta">${state.ai.content.length}件</span></div>`);
-        for (const c of state.ai.content) {
-          push(row(c.hit, `<div class="snippet">${snippetHtml(c.snippet)}</div>`), { type: "file", path: c.path, hit: c.hit });
-        }
-      }
-      if (state.ai.items.length) {
-        parts.push(`<div class="section-head"><span>名前・条件に一致</span><span class="meta">${state.ai.items.length}件</span></div>`);
-        for (const h of state.ai.items) push(row(h), { type: "file", path: h.path, hit: h });
-      }
-      if (!state.ai.items.length && !state.ai.content.length) {
-        parts.push(`<div class="empty-note">見つかりませんでした。言い方を変えるか、思い出せる言葉を足してみてください。</div>`);
-      }
-    } else if (!state.pins.length) {
-      parts.push(`<div class="empty-note">探しているファイルを文章で入力して Enter を押してください。<br>例:「先月作った引っ越しの見積もりのPDF」「去年の夏の旅行の写真」</div>`);
-    }
-  } else if (state.names) {
+  if (state.names) {
     const n = state.names;
     // A file matching by name and by content is listed once, with its content snippet.
     const snippets = new Map((state.content || []).map((c) => [c.path.toLowerCase(), c.snippet]));
@@ -267,7 +224,7 @@ function render() {
       }
     }
     if (!n.items.length && !contentOnly.length && !state.pins.length) {
-      parts.push(`<div class="empty-note">見つかりませんでした。<br>言葉を短くする、ひらがなで打つ、または <b>AIで探す</b> を試してください。</div>`);
+      parts.push(`<div class="empty-note">見つかりませんでした。<br>言葉を短くする、ひらがなで打つ、別の言葉で探す、などを試してください。</div>`);
     }
   } else if (state.recent) {
     if (state.recent.length) {
@@ -297,12 +254,6 @@ async function runSearch() {
   const text = q.value;
   const seq = ++searchSeq;
   clearTimeout(contentTimer);
-  if (aiMode) {
-    state.ai = null;
-    state.pins = [];
-    render();
-    return;
-  }
   if (!text.trim()) {
     state.names = null;
     state.content = null;
@@ -334,31 +285,7 @@ async function runSearch() {
   }
 }
 
-async function runAiSearch() {
-  const text = q.value.trim();
-  if (!text) return;
-  const seq = ++searchSeq;
-  state.aiLoading = true;
-  state.ai = null;
-  render();
-  try {
-    const r = await invoke("ai_search", { text });
-    if (seq !== searchSeq) return;
-    lastWords = [...r.parsed.name_keywords, ...r.parsed.content_keywords];
-    state.ai = r;
-  } catch (e) {
-    toast(String(e), true);
-  } finally {
-    if (seq === searchSeq) {
-      state.aiLoading = false;
-      sel = 0;
-      render();
-    }
-  }
-}
-
 q.addEventListener("input", () => {
-  if (aiMode) return;
   clearTimeout(nameTimer);
   nameTimer = setTimeout(runSearch, 60);
 });
@@ -385,12 +312,6 @@ q.addEventListener("keydown", (e) => {
   else if (e.key === "PageUp") { e.preventDefault(); sel = Math.max(0, sel - 10); updateSel(); }
   else if (e.key === "Enter") {
     e.preventDefault();
-    // In AI mode, Enter asks the AI when the text changed; otherwise it opens the selection.
-    if (aiMode && !e.ctrlKey && (q.dataset.dirty === "1" || !state.ai)) {
-      q.dataset.dirty = "0";
-      runAiSearch();
-      return;
-    }
     openItem(currentItem(), e.ctrlKey);
   }
   else if (e.key === "Escape") {
@@ -403,9 +324,7 @@ q.addEventListener("keydown", (e) => {
     const it = currentItem();
     if (it) copyText(it.path);
   }
-  else if (isKey(e, "i") && e.ctrlKey) { e.preventDefault(); setAiMode(!aiMode); }
 });
-q.addEventListener("input", () => { if (aiMode) q.dataset.dirty = "1"; });
 
 resultsEl.addEventListener("click", (e) => {
   const el = e.target.closest("[data-i]");
@@ -539,7 +458,7 @@ $("#org-root").addEventListener("change", inspectFolder);
 $("#org-recursive").addEventListener("change", inspectFolder);
 
 function setOrgBusy(busy, label) {
-  $$(".preset, #org-ai, #org-apply").forEach((b) => (b.disabled = busy));
+  $$(".preset, #org-apply").forEach((b) => (b.disabled = busy));
   if (busy) {
     $("#org-plan-card").hidden = false;
     $("#org-plan").innerHTML = `<div class="empty-note"><span class="spinner"></span>${esc(label)}</div>`;
@@ -561,22 +480,6 @@ $$(".preset").forEach((b) =>
     }
   })
 );
-
-$("#org-ai").addEventListener("click", async () => {
-  const root = $("#org-root").value.trim();
-  const instruction = $("#org-instruction").value.trim();
-  if (!root) { toast("先に整理するフォルダを選んでください", true); return; }
-  if (!instruction) { toast("どう整理したいかを入力してください", true); $("#org-instruction").focus(); return; }
-  setOrgBusy(true, "AI が整理案を考えています（数十秒かかることがあります）…");
-  try {
-    showPlan(await invoke("organize_ai", { root, instruction, recursive: $("#org-recursive").checked }));
-  } catch (e) {
-    hidePlan();
-    toast(String(e), true);
-  } finally {
-    setOrgBusy(false);
-  }
-});
 
 function hidePlan() {
   currentPlan = null;
@@ -794,12 +697,8 @@ async function loadSettings() {
     $("#content-max").value = s.content_max_mb;
     $("#hotkey").value = s.hotkey;
     $("#autostart").checked = s.autostart;
-    $("#model").value = s.model;
-    if (![...$("#model").options].some((o) => o.value === s.model)) {
-      $("#model").add(new Option(s.model, s.model, true, true));
-    }
-    $("#api-state").textContent = v.has_api_key ? "APIキー: 登録済み" : "APIキー: 未登録（AI機能を使うときに必要です）";
-    $("#settings-version").textContent = `Sagasu v${v.version}`;
+    $("#check-updates").checked = s.check_updates;
+    $("#settings-version").textContent = `Sagasu v${v.version} · データ形式 v${v.data_version}`;
   } catch (e) {
     toast(String(e), true);
   }
@@ -846,7 +745,7 @@ $("#settings-save").addEventListener("click", async () => {
     content_max_mb: Math.max(1, Number($("#content-max").value) || 30),
     hotkey: hk.value.trim(),
     autostart: $("#autostart").checked,
-    model: $("#model").value,
+    check_updates: $("#check-updates").checked,
   };
   try {
     await invoke("save_settings", { settings: s });
@@ -857,31 +756,6 @@ $("#settings-save").addEventListener("click", async () => {
   }
 });
 
-$("#api-save").addEventListener("click", async () => {
-  try {
-    await invoke("set_api_key", { key: $("#api-key").value });
-    $("#api-key").value = "";
-    toast("APIキーを保存しました");
-    loadSettings();
-  } catch (e) {
-    toast(String(e), true);
-  }
-});
-$("#api-test").addEventListener("click", async () => {
-  const btn = $("#api-test");
-  btn.disabled = true;
-  $("#api-state").innerHTML = `<span class="spinner"></span>接続しています…`;
-  try {
-    // Test with the selected model, so a wrong model name is caught too.
-    await invoke("save_settings", { settings: { ...settingsCache, model: $("#model").value } }).catch(() => {});
-    await invoke("test_api_key", { key: $("#api-key").value || null });
-    $("#api-state").textContent = "接続できました。AI機能を使えます。";
-  } catch (e) {
-    $("#api-state").textContent = String(e);
-  } finally {
-    btn.disabled = false;
-  }
-});
 $("#rescan").addEventListener("click", async () => {
   await invoke("rescan");
   toast("インデックスを作り直しています");
@@ -890,6 +764,59 @@ document.addEventListener("click", (e) => {
   const a = e.target.closest("a[data-href]");
   if (a) { e.preventDefault(); openUrl(a.dataset.href); }
 });
+
+// ---------------------------------------------------------------- updates
+
+let pendingUpdate = null;
+
+function showUpdate(u) {
+  pendingUpdate = u;
+  const pill = $("#update-pill");
+  pill.textContent = `新しいバージョン v${u.version} があります — 更新する`;
+  pill.hidden = false;
+}
+
+async function checkUpdate(manual) {
+  const st = $("#update-state");
+  if (manual) st.innerHTML = `<span class="spinner"></span>確認しています…`;
+  try {
+    const u = await invoke("check_update");
+    if (u) {
+      showUpdate(u);
+      if (manual) st.textContent = `v${u.version} があります（現在 v${u.current}）。画面下のボタンから更新できます。`;
+    } else if (manual) {
+      st.textContent = "最新版です。";
+    }
+  } catch (e) {
+    if (manual) st.textContent = String(e);
+  }
+}
+
+$("#update-pill").addEventListener("click", async () => {
+  if (!pendingUpdate) return;
+  const notes = pendingUpdate.notes ? `
+
+${pendingUpdate.notes.slice(0, 600)}` : "";
+  if (!(await confirmBox(`v${pendingUpdate.version} に更新します。ダウンロード後、Sagasu が自動で再起動します。${notes}`, "更新する"))) return;
+  const pill = $("#update-pill");
+  pill.disabled = true;
+  pill.textContent = "ダウンロードしています…";
+  try {
+    await invoke("install_update");
+  } catch (e) {
+    toast(String(e), true);
+    pill.disabled = false;
+    showUpdate(pendingUpdate);
+  }
+});
+$("#update-check").addEventListener("click", () => checkUpdate(true));
+$("#open-logs").addEventListener("click", () => invoke("open_log_folder").catch((e) => toast(String(e), true)));
+
+// Check once a little after startup, without slowing the first search.
+setTimeout(async () => {
+  const v = await invoke("get_settings").catch(() => null);
+  if (v?.settings.check_updates) checkUpdate(false);
+}, 8000);
 
 // ---------------------------------------------------------------- status
 
@@ -906,7 +833,7 @@ async function refreshStatus() {
     // A finished scan replaces the index: refresh the idle "recent files" list.
     const scanChanged = s.last_scan !== lastScanSeen;
     lastScanSeen = s.last_scan;
-    if (!q.value && currentView === "search" && !aiMode && s.indexed && (scanChanged || !state.recent || !state.recent.length)) runSearch();
+    if (!q.value && currentView === "search" && s.indexed && (scanChanged || !state.recent || !state.recent.length)) runSearch();
   } catch { /* backend not ready */ }
 }
 setInterval(refreshStatus, 1500);

@@ -8,7 +8,7 @@
 **散らかったフォルダは、プレビューしてから安全に片付く。**
 
 [![Windows 10 | 11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)](#-ダウンロードとインストール)
-[![Version](https://img.shields.io/badge/version-0.1.0-2563eb)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.2.0-2563eb)](CHANGELOG.md)
 [![Built with Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://tauri.app/)
 [![Rust](https://img.shields.io/badge/Rust-stable-CE422B?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-16a34a)](LICENSE)
@@ -32,9 +32,9 @@
 | 😣 困りごと | ✨ Sagasu なら |
 | --- | --- |
 | **名前は覚えているのに、どこに保存したか忘れた** | 名前の一部を打つだけで、パソコン中から一瞬で候補が出ます |
-| **名前は覚えていないけど、中身は覚えている** | Word・Excel・PowerPoint・PDF の **本文** まで探せます。文章で聞ける「AIで探す」も |
+| **名前は覚えていないけど、中身は覚えている** | Word・Excel・PowerPoint・PDF の **本文** まで探せます |
 | **深い階層や OneDrive・NAS の、行きにくいフォルダ** | 「経理」など短い **あだ名** を付ければ、打つだけで一番上に出ます |
-| **ダウンロードやデスクトップが散らかっている** | 「種類別」などを選ぶか、AI に指示するだけで整理案を作成。**確認してから** 実行できます |
+| **ダウンロードやデスクトップが散らかっている** | 「種類別」などを選ぶだけで整理案を作成。**確認してから** 実行できます |
 
 <br>
 
@@ -66,7 +66,6 @@
 
 ### 🗂️ 安全に片付く整理
 - 種類別・年/月別・年別・拡張子別をワンクリック
-- AI に「請求書は取引先ごとに」などと指示も可能
 - **移動前にプレビュー**、ファイル単位で外せる
 - いつでも **元に戻せる** 履歴つき
 
@@ -78,6 +77,7 @@
 - タスクトレイに常駐、Windows 起動時の自動起動
 - ピン留め・あだ名で行きにくい場所へ直行
 - 重複ファイルを見つけて、ごみ箱へ
+- 新しいバージョンがあれば、画面下のボタンから **自動アップデート**
 
 </td>
 </tr>
@@ -91,6 +91,9 @@
 2. ダウンロードしたファイルをダブルクリックしてインストール（管理者権限は不要です）
 3. 起動するとファイルの一覧づくりが始まります。数十秒〜数分で検索できるようになります
 
+> [!TIP]
+> **v0.1.0 をお使いの方へ：** v0.1.0 には自動アップデート機能がないため、v0.2.0 は上の手順で一度手動でインストールしてください。以降は、新しいバージョンが出ると画面下のボタンから自動で更新できます。
+
 > [!NOTE]
 > Sagasu は電子署名をしていないため、初回に「Windows によって PC が保護されました」と表示されることがあります。
 > その場合は **「詳細情報」→「実行」** を押してください。
@@ -99,7 +102,7 @@
 | --- | --- |
 | OS | Windows 10 / 11（64bit） |
 | 必要なもの | Microsoft Edge WebView2（Windows 11 には標準で入っています） |
-| AI 機能 | 任意。使う場合のみ Anthropic の APIキーが必要です |
+| インターネット | 更新の確認とダウンロードのときだけ使用します（設定でオフにできます） |
 
 <br>
 
@@ -122,10 +125,6 @@
 | `size>サイズ` / `size<サイズ` | 大きさで絞る | `size>100mb` |
 | `type:folder` / `type:file` | フォルダだけ / ファイルだけ | `経理 type:folder` |
 
-> [!TIP]
-> 名前を思い出せないときは、右上の **「AIで探す」**（`Ctrl+I`）に切り替えて
-> 「去年の夏の旅行の写真」「先月の引っ越しの見積もりPDF」のように **文章で** 入力してください。
-
 ### 3. キーボードだけで操作する
 
 | キー | 動作 |
@@ -135,7 +134,6 @@
 | `Enter` | 開く |
 | `Ctrl+Enter` | 保存場所をエクスプローラーで開く |
 | `Ctrl+Shift+C` | パスをコピー |
-| `Ctrl+I` | 「AIで探す」に切り替え |
 | `Ctrl+1`〜`5` | 検索 / 整理 / ピン留め / 履歴 / 設定 |
 | `Esc` | 入力を消す・ウィンドウを隠す |
 
@@ -151,8 +149,7 @@
 
 1. **整理するフォルダを選ぶ**（「ダウンロード」「デスクトップ」はボタン一つ）
 2. **整理のしかたを選ぶ**
-   - 🏷️ プリセット：種類別 / 年/月別 / 年別 / 拡張子別（AI 不要・無料）
-   - 🤖 AI に指示：「請求書と見積書は取引先ごとに、写真は年別に」など
+   - 🏷️ プリセット：種類別 / 年/月別 / 年別 / 拡張子別
 3. **プレビューを確認** して「この内容で整理する」。不要な移動はチェックを外せます
 4. 気に入らなければ **「履歴」→「元に戻す」** で元通り
 
@@ -162,30 +159,13 @@
 
 <br>
 
-## 🤖 AI 機能（任意）
-
-AI 機能は **使わなくても** 検索・プリセット整理・重複検出はすべて使えます。
-
-1. [Anthropic Console](https://console.anthropic.com/) で APIキーを発行
-2. Sagasu の **「設定」→「AI（Claude）」** に貼り付けて「保存」→「接続テスト」
-
-| 機能 | AI に送るもの | 送らないもの |
-| --- | --- | --- |
-| AIで探す | 入力した文章だけ | ファイル名・ファイルの中身 |
-| AI 整理 | 対象フォルダ内のファイル名・場所・日付・サイズ | ファイルの中身 |
-
-- モデルは Claude Opus 5.5（既定）/ Sonnet 5.5 / Haiku 5.5 から選べます
-- 利用料は Anthropic の API 料金として、APIキーの持ち主に請求されます
-- APIキーは Windows の資格情報マネージャーに保存されます
-
-<br>
-
 ## 🔒 プライバシーと安全
 
 - 🏠 検索用の一覧（インデックス）は **パソコンの中だけ**（`%APPDATA%\jp.sagasu.app`）に保存
 - ☁️ OneDrive の「オンラインのみ」のファイルは、勝手にダウンロードしないよう中身を読みません
 - 🗑️ ファイルを削除しません。重複ファイルの片付けも **ごみ箱へ移動**（ごみ箱から戻せます）
-- 📡 AI 機能を使ったとき以外、インターネットに接続しません
+- 📡 インターネットに接続するのは、新しいバージョンがあるかの確認（GitHub）と、更新をクリックしたときのダウンロードだけです。確認は設定でオフにできます
+- 🙈 ファイル名や中身を、どこにも送信することはありません
 
 <br>
 
@@ -212,7 +192,15 @@ AI 機能は **使わなくても** 検索・プリセット整理・重複検�
 <summary><b>漢字の読みで探せますか？（「けいり」で「経理」）</b></summary>
 
 いまは対応していません。ひらがな⇔カタカナ、全角⇔半角、ローマ字⇔かなの違いは吸収します。
-名前の読みしか思い出せないときは「AIで探す」を試してください。
+名前の一部の漢字を入力するか、`in:フォルダ名` でフォルダを絞り込んでください。
+
+</details>
+
+<details>
+<summary><b>不具合を報告したい</b></summary>
+
+「設定」→「アップデートとサポート」→「ログフォルダを開く」を押し、`sagasu.log` を報告に添付してください。
+ログはパソコンの中だけに保存されます（最大約 2 MB で、古いものは自動的に入れ替わります）。
 
 </details>
 
@@ -243,9 +231,11 @@ cargo tauri build
 cargo test
 ```
 
+リリース用のビルド（署名付きインストーラーと自動アップデート用の `latest.json`）は `scripts\build-release.ps1` で作れます（更新用の秘密鍵が必要）。
+
 | フォルダ | 中身 |
 | --- | --- |
-| `src-tauri/src` | Rust のバックエンド（検索インデックス・全文抽出・整理・AI 連携） |
+| `src-tauri/src` | Rust のバックエンド（検索インデックス・全文抽出・整理） |
 | `ui` | 画面（HTML / CSS / JavaScript、ビルド不要） |
 | `docs` | 使い方ガイドと画像 |
 
@@ -264,9 +254,11 @@ cargo test
 
 - **Instant name search** across your folders (~100k files in tens of milliseconds), tolerant of hiragana/katakana, full/half width, romaji and small typos.
 - **Full-text search** inside Word, Excel, PowerPoint, PDF and text files, with highlighted previews.
-- **Safe organizing**: presets (by type, year/month, year, extension) or an instruction to Claude; every plan is previewed first, nothing is ever deleted, collisions are renamed, and every run can be undone.
+- **Safe organizing**: presets (by type, year/month, year, extension); every plan is previewed first, nothing is ever deleted, collisions are renamed, and every run can be undone.
 - **Hotkey** `Alt+Space`, tray icon, pins/aliases, duplicate finder (moves copies to the Recycle Bin).
-- **AI is optional.** Natural-language search sends only the typed sentence; AI organize sends file names, paths, dates and sizes — never file contents. Requires an Anthropic API key.
-- **Install**: download `Sagasu_x.y.z_x64-setup.exe` from [Releases](https://github.com/Nishi-Yura/sagasu/releases). The installer is unsigned; on the SmartScreen prompt choose "More info" → "Run anyway".
+- **Auto-update**: checks GitHub Releases at startup and installs signed updates with one click. Can be turned off in Settings.
+- **Privacy**: the index stays on your PC. The app connects to the internet only to check for and download updates. File names and contents are never sent anywhere.
+- **Logs**: `sagasu.log` stays on your PC; open the log folder from Settings → Updates & Support when reporting a bug.
+- **Install**: download `Sagasu_x.y.z_x64-setup.exe` from [Releases](https://github.com/Nishi-Yura/sagasu/releases). The installer is unsigned; on the SmartScreen prompt choose "More info" → "Run anyway". Users of v0.1.0 need to install v0.2.0 manually once; updates are automatic after that.
 
 </details>

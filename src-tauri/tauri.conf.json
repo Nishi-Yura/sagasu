@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Sagasu",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "jp.sagasu.app",
   "build": {
     "frontendDist": "../ui"
@@ -28,12 +28,15 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi"],
+    "targets": [
+      "nsis",
+      "msi"
+    ],
     "publisher": "Nishi-Yura",
     "copyright": "© 2026 Nishi-Yura",
     "category": "Utility",
     "shortDescription": "名前でも中身でも、すぐ見つかるファイル検索",
-    "longDescription": "Sagasu はファイル名・中身・文章で瞬時にファイルを探し、AI の整理案をプレビューしてから安全にフォルダを片付ける Windows 用ツールです。",
+    "longDescription": "Sagasu はファイル名と中身で瞬時にファイルを探し、整理案をプレビューしてから安全にフォルダを片付ける Windows 用ツールです。",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -42,11 +45,26 @@
     ],
     "windows": {
       "nsis": {
-        "languages": ["Japanese", "English"],
+        "languages": [
+          "Japanese",
+          "English"
+        ],
         "installMode": "currentUser"
       },
       "wix": {
         "language": "ja-JP"
+      }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDA1RDFEM0E3QkI0RTlEMUIKUldRYm5VNjdwOVBSQlNOK1N0cVNMMFUvcW9uOC9leVl6cTVlN1E5WTlNZWZHWjVFc1VDVWdnZTUK",
+      "endpoints": [
+        "https://github.com/Nishi-Yura/sagasu/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }
