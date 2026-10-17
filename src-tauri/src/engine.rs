@@ -142,6 +142,8 @@ impl Engine {
         std::thread::Builder::new().name("reading".into()).spawn(move || me.reading_loop(rrx)).ok();
         let me = self.clone();
         std::thread::Builder::new().name("rules".into()).spawn(move || me.rules_loop()).ok();
+        let me = self.clone();
+        std::thread::Builder::new().name("rescan".into()).spawn(move || me.rescan_loop()).ok();
         self.rescan();
     }
 
@@ -292,6 +294,25 @@ impl Engine {
         }
         if new_names {
             self.wake_reading();
+        }
+    }
+
+    /// Network shares and removable drives often miss change notifications, so they are re-scanned on a timer.
+    fn rescan_loop(self: Arc<Self>) {
+        loop {
+            std::thread::sleep(Duration::from_secs(60));
+            let (roots, minutes) = {
+                let s = self.settings.read();
+                (s.root_paths(), s.rescan_minutes)
+            };
+            if minutes == 0 || !roots.iter().any(|r| needs_polling(r)) {
+                continue;
+            }
+            let last = self.status.last_scan.load(Ordering::Relaxed);
+            if last > 0 && chrono::Utc::now().timestamp() - last >= i64::from(minutes) * 60 && !self.status.scanning.load(Ordering::Relaxed) {
+                log::info!("periodic re-scan for network/removable locations");
+                self.rescan();
+            }
         }
     }
 
@@ -663,6 +684,27 @@ fn ocr_ready() -> bool {
     *READY.get_or_init(ocr::available)
 }
 
+/// UNC paths and drives that are network or removable (NAS, USB, SD cards).
+pub fn needs_polling(path: &Path) -> bool {
+    let s = path.to_string_lossy();
+    if s.starts_with("\\\\") {
+        return true;
+    }
+    drive_type(&s).is_some_and(|t| t == 2 || t == 4) // DRIVE_REMOVABLE, DRIVE_REMOTE
+}
+
+#[cfg(windows)]
+fn drive_type(path: &str) -> Option<u32> {
+    let root: Vec<u16> = path.get(..3)?.encode_utf16().chain(std::iter::once(0)).collect();
+    // SAFETY: `root` is a NUL-terminated wide string like "D:\\".
+    Some(unsafe { windows::Win32::Storage::FileSystem::GetDriveTypeW(windows::core::PCWSTR(root.as_ptr())) })
+}
+
+#[cfg(not(windows))]
+fn drive_type(_path: &str) -> Option<u32> {
+    None
+}
+
 fn same_path(a: &Path, b: &Path) -> bool {
     let n = |p: &Path| p.to_string_lossy().to_lowercase().replace('/', "\\").trim_end_matches('\\').to_string();
     n(a) == n(b)
@@ -686,6 +728,12 @@ fn in_dot_dir(path: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn polling_only_for_network_and_removable() {
+        assert!(super::needs_polling(std::path::Path::new(r"\\nas\share\docs")));
+        assert!(!super::needs_polling(std::path::Path::new(r"C:\Users")));
+    }
+
     #[test]
     fn dev_project_detection() {
         let d = tempfile::tempdir().unwrap();

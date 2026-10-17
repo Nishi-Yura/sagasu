@@ -25,6 +25,10 @@ pub struct Settings {
     pub check_updates: bool,
     /// Auto-organize rules.
     pub rules: Vec<crate::rules::Rule>,
+    /// Re-scan network and removable drives this often (minutes); their change notifications are unreliable.
+    pub rescan_minutes: u32,
+    /// The first-run guide has been shown.
+    pub onboarded: bool,
 }
 
 impl Default for Settings {
@@ -41,6 +45,8 @@ impl Default for Settings {
             show_hidden: false,
             check_updates: true,
             rules: Vec::new(),
+            rescan_minutes: 30,
+            onboarded: false,
         }
     }
 }

@@ -181,6 +181,25 @@ let nameTimer, contentTimer;
 let lastWords = [];
 
 const state = { pins: [], names: null, content: null, recent: null };
+const multi = new Set(); // indexes of rows picked with Ctrl / Shift
+let anchor = 0;
+
+// ---- sort order
+let sortBy = "relevance";
+try { sortBy = localStorage.getItem("sagasu.sort") || "relevance"; } catch { /* default */ }
+$("#sort").value = sortBy;
+$("#sort").addEventListener("change", () => {
+  sortBy = $("#sort").value;
+  try { localStorage.setItem("sagasu.sort", sortBy); } catch { /* optional */ }
+  runSearch();
+  q.focus();
+});
+const SORTERS = {
+  newest: (a, b) => b.mtime - a.mtime,
+  oldest: (a, b) => a.mtime - b.mtime,
+  name: (a, b) => a.name.localeCompare(b.name, "ja"),
+  largest: (a, b) => b.size - a.size,
+};
 
 // ---- filter chips: extra query words added to what the user typed
 const filters = { type: "", period: "" };
@@ -247,6 +266,7 @@ function render() {
     const snippets = new Map((state.content || []).map((c) => [c.path.toLowerCase(), c.snippet]));
     const named = new Set(n.items.map((h) => h.path.toLowerCase()));
     const contentOnly = (state.content || []).filter((c) => c.hit && !named.has(c.path.toLowerCase()));
+    if (SORTERS[sortBy]) contentOnly.sort((a, b) => SORTERS[sortBy](a.hit, b.hit));
     if (n.items.length) {
       parts.push(`<div class="section-head"><span>ファイル名</span><span class="meta">${n.total.toLocaleString()}件${n.total > n.items.length ? `（上位${n.items.length}件）` : ""} · ${n.took_ms}ms</span></div>`);
       for (const h of n.items) {
@@ -273,12 +293,15 @@ function render() {
   }
 
   resultsEl.innerHTML = parts.join("");
+  multi.clear();
   sel = Math.min(sel, Math.max(items.length - 1, 0));
   updateSel(false);
 }
 
 function updateSel(scroll = true) {
   $$(".item.sel", resultsEl).forEach((e) => e.classList.remove("sel"));
+  $$(".item[data-i]", resultsEl).forEach((e) => e.classList.toggle("multi", multi.has(Number(e.dataset.i))));
+  updateSelbar();
   const el = resultsEl.querySelector(`[data-i="${sel}"]`);
   if (el) {
     el.classList.add("sel");
@@ -300,7 +323,7 @@ async function runSearch() {
     return;
   }
   try {
-    const r = await invoke("search", { query: text, limit: 150 });
+    const r = await invoke("search", { query: text, limit: 150, sort: sortBy });
     if (seq !== searchSeq) return;
     lastWords = q.value.split(/[\s　]+/).filter((w) => w && !w.includes(":") && !/^size[<>]/.test(w));
     state.pins = r.pins;
@@ -344,6 +367,15 @@ async function openItem(it, reveal = false) {
 
 q.addEventListener("keydown", (e) => {
   if (e.isComposing || e.keyCode === 229) return; // IME conversion in progress
+  if (e.shiftKey && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+    e.preventDefault();
+    if (multi.size === 0 && items[sel]?.type === "file") { multi.add(sel); anchor = sel; }
+    const next = e.key === "ArrowDown" ? Math.min(items.length - 1, sel + 1) : Math.max(0, sel - 1);
+    if (items[next]?.type === "file") multi.add(next);
+    sel = next;
+    updateSel();
+    return;
+  }
   if (e.key === "ArrowDown") { e.preventDefault(); if (sel < items.length - 1) { sel++; updateSel(); } }
   else if (e.key === "ArrowUp") { e.preventDefault(); if (sel > 0) { sel--; updateSel(); } }
   else if (e.key === "PageDown") { e.preventDefault(); sel = Math.min(items.length - 1, sel + 10); updateSel(); }
@@ -356,6 +388,11 @@ q.addEventListener("keydown", (e) => {
     e.preventDefault();
     if (q.value) { q.value = ""; runSearch(); }
     else invoke("hide_window");
+  }
+  else if (isKey(e, "a") && e.ctrlKey && e.shiftKey) {
+    e.preventDefault();
+    items.forEach((it, i) => it.type === "file" && multi.add(i));
+    updateSel(false);
   }
   else if (isKey(e, "c") && e.ctrlKey && e.shiftKey) {
     e.preventDefault();
@@ -370,9 +407,73 @@ resultsEl.addEventListener("click", (e) => {
   if (e.target.dataset.hclear) { try { localStorage.removeItem(HISTORY_KEY); } catch { /* ignore */ } render(); return; }
   const el = e.target.closest("[data-i]");
   if (!el) return;
-  sel = Number(el.dataset.i);
+  const i = Number(el.dataset.i);
+  if (e.ctrlKey && items[i]?.type === "file") {
+    if (multi.size === 0 && items[sel]?.type === "file") multi.add(sel);
+    multi.has(i) ? multi.delete(i) : multi.add(i);
+    anchor = i;
+  } else if (e.shiftKey) {
+    multi.clear();
+    const [a, b] = [Math.min(anchor, i), Math.max(anchor, i)];
+    for (let k = a; k <= b; k++) if (items[k]?.type === "file") multi.add(k);
+  } else {
+    multi.clear();
+    anchor = i;
+  }
+  sel = i;
   updateSel(false);
 });
+
+// ---- multi-select bar
+function selectedItems() {
+  return [...multi].sort((a, b) => a - b).map((i) => items[i]).filter((it) => it && it.type === "file");
+}
+function updateSelbar() {
+  const n = multi.size;
+  $("#selbar").hidden = n < 2;
+  $("#selcount").textContent = `${n}件を選択中`;
+}
+$("#selbar").addEventListener("click", async (e) => {
+  const act = e.target.dataset.bulk;
+  if (!act) return;
+  const its = selectedItems();
+  if (act === "clear") { multi.clear(); updateSel(false); return; }
+  if (act === "paths") { copyText(its.map((it) => it.path).join("\r\n")); return; }
+  const dest = await pickPath(true);
+  if (!dest) return;
+  const copy = act === "copy";
+  if (!(await confirmBox(`${its.length}件を\n${dest}\nへ${copy ? "コピー" : "移動"}します。${copy ? "" : "\nあとで「履歴」から元に戻せます。"}`, copy ? "コピーする" : "移動する"))) return;
+  try {
+    const r = await invoke("transfer", { paths: its.map((it) => it.path), dest, copy });
+    const verb = copy ? "コピー" : "移動";
+    toast(r.errors.length ? `${r.moved}件を${verb}しました。${r.errors.length}件はできませんでした: ${r.errors[0]}` : `${r.moved}件を${verb}しました`, r.errors.length > 0);
+    multi.clear();
+    runSearch();
+  } catch (er) {
+    toast(String(er), true);
+  }
+});
+
+// ---- drag files out to Explorer, mail, chat…
+// A native drag starts once the pressed mouse has moved a few pixels (as tauri-plugin-drag does);
+// the browser's own HTML drag is not used because it cannot carry real files out of the window.
+let dragFrom = null;
+resultsEl.addEventListener("mousedown", (e) => {
+  const el = e.target.closest("[data-i]");
+  dragFrom = e.button === 0 && el ? { x: e.clientX, y: e.clientY, i: Number(el.dataset.i) } : null;
+});
+resultsEl.addEventListener("mousemove", (e) => {
+  if (!dragFrom || !(e.buttons & 1)) { dragFrom = null; return; }
+  if (Math.abs(e.clientX - dragFrom.x) + Math.abs(e.clientY - dragFrom.y) < 6) return;
+  const i = dragFrom.i;
+  dragFrom = null;
+  const it = items[i];
+  if (!it || it.type !== "file") return;
+  const paths = multi.has(i) ? selectedItems().map((x) => x.path) : [it.path];
+  invoke("start_drag", { paths }).catch((er) => toast(String(er), true));
+});
+document.addEventListener("mouseup", () => { dragFrom = null; });
+resultsEl.addEventListener("dragstart", (e) => e.preventDefault());
 resultsEl.addEventListener("dblclick", (e) => {
   const el = e.target.closest("[data-i]");
   if (el) openItem(items[Number(el.dataset.i)]);
@@ -890,6 +991,7 @@ async function loadSettings() {
     $("#hotkey").value = s.hotkey;
     $("#autostart").checked = s.autostart;
     $("#check-updates").checked = s.check_updates;
+    $("#rescan-minutes").value = s.rescan_minutes;
     $("#settings-version").textContent = `Sagasu v${v.version} · データ形式 v${v.data_version}`;
   } catch (e) {
     toast(String(e), true);
@@ -943,6 +1045,7 @@ $("#settings-save").addEventListener("click", async () => {
     hotkey: hk.value.trim(),
     autostart: $("#autostart").checked,
     check_updates: $("#check-updates").checked,
+    rescan_minutes: Math.max(0, Math.min(1440, Number($("#rescan-minutes").value) || 0)),
   };
   try {
     await invoke("save_settings", { settings: s });
@@ -961,6 +1064,97 @@ document.addEventListener("click", (e) => {
   const a = e.target.closest("a[data-href]");
   if (a) { e.preventDefault(); openUrl(a.dataset.href); }
 });
+
+// ---------------------------------------------------------------- backup
+
+async function dialogSave(opts) {
+  if (T.dialog?.save) return T.dialog.save(opts);
+  return invoke("plugin:dialog|save", { options: opts });
+}
+
+$("#backup-export").addEventListener("click", async () => {
+  const d = new Date();
+  const pad = (x) => String(x).padStart(2, "0");
+  const path = await dialogSave({
+    defaultPath: `sagasu-backup-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}.json`,
+    filters: [{ name: "Sagasu バックアップ", extensions: ["json"] }],
+  }).catch(() => null);
+  if (!path) return;
+  try {
+    await invoke("export_backup", { path });
+    toast("書き出しました");
+  } catch (e) {
+    toast(String(e), true);
+  }
+});
+
+$("#backup-import").addEventListener("click", async () => {
+  const opts = { multiple: false, directory: false, filters: [{ name: "Sagasu バックアップ", extensions: ["json"] }] };
+  const path = await (T.dialog?.open ? T.dialog.open(opts) : invoke("plugin:dialog|open", { options: opts })).catch(() => null);
+  if (!path) return;
+  if (!(await confirmBox("バックアップを読み込みます。\n今の設定と自動整理ルールは置き換わり、ピン留めは追加されます。", "読み込む"))) return;
+  try {
+    const n = await invoke("import_backup", { path });
+    toast(`設定と ${n} 件のピン留めを読み込みました`);
+    loadSettings();
+  } catch (e) {
+    toast(String(e), true);
+  }
+});
+
+// ---------------------------------------------------------------- first-run guide
+
+const GUIDE = () => {
+  const hk = esc(settingsCache?.hotkey || "Alt+Space");
+  return [
+    `<div class="guide-step"><div class="em">👋</div><h3>Sagasu へようこそ</h3>
+      <p><kbd>${hk}</kbd> を押すと、どの画面からでも呼び出せます。名前の一部を打って <kbd>Enter</kbd> で開きます。</p>
+      <ul><li><kbd>Esc</kbd> で隠れます。ウィンドウを閉じてもタスクトレイで待機しています</li>
+      <li>最初の数十秒〜数分で、ファイルの一覧と中身の検索用データを作ります</li></ul></div>`,
+    `<div class="guide-step"><div class="em">🔍</div><h3>探し方のコツ</h3>
+      <ul><li>読みで探せます：「けいり」で「経理」</li>
+      <li>Word・Excel・PDF の中身や、スクリーンショットの文字でも見つかります</li>
+      <li>上のボタンで種類・期間を絞り込み。<code>ext:pdf</code> <code>先月</code> <code>in:経理</code> のような書き方も使えます</li>
+      <li>結果は右クリックでメニュー、ドラッグでメールやフォルダへ。<kbd>Ctrl</kbd>/<kbd>Shift</kbd>+クリックでまとめて選べます</li></ul></div>`,
+    `<div class="guide-step"><div class="em">🧹</div><h3>片付けも安全に</h3>
+      <ul><li>「整理」タブで、種類別・年月別などの整理案をプレビューしてから実行できます</li>
+      <li>「自動整理ルール」で、ダウンロードに来たファイルを自動で振り分けられます</li>
+      <li>ファイルは削除しません。整理はいつでも「履歴」から元に戻せます</li></ul>
+      <p>設定の「バックアップ」で、設定やピン留めを別のパソコンへ移せます。</p></div>`,
+  ];
+};
+let guideStep = 0;
+function renderGuide() {
+  const steps = GUIDE();
+  $("#guide-steps").innerHTML = steps[guideStep];
+  $("#guide-dots").innerHTML = steps.map((_, i) => `<i class="${i === guideStep ? "on" : ""}"></i>`).join("");
+  $("#guide-back").hidden = guideStep === 0;
+  $("#guide-next").textContent = guideStep === steps.length - 1 ? "はじめる" : "次へ";
+}
+function openGuide() {
+  guideStep = 0;
+  renderGuide();
+  $("#guide").hidden = false;
+  $("#guide-next").focus();
+}
+async function closeGuide() {
+  $("#guide").hidden = true;
+  try {
+    const v = await invoke("get_settings");
+    if (!v.settings.onboarded) await invoke("save_settings", { settings: { ...v.settings, onboarded: true } });
+  } catch { /* shown again next time */ }
+  q.focus();
+}
+$("#guide-next").addEventListener("click", () => {
+  if (guideStep < GUIDE().length - 1) { guideStep++; renderGuide(); } else closeGuide();
+});
+$("#guide-back").addEventListener("click", () => { if (guideStep > 0) { guideStep--; renderGuide(); } });
+$("#guide-skip").addEventListener("click", closeGuide);
+$("#show-guide").addEventListener("click", openGuide);
+invoke("get_settings").then((v) => {
+  settingsCache = settingsCache || structuredClone(v.settings);
+  if (!v.settings.onboarded) openGuide();
+}).catch(() => {});
 
 // ---------------------------------------------------------------- updates
 

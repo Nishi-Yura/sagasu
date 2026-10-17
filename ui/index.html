@@ -33,6 +33,13 @@
         <button class="fchip" data-q="今年">今年</button>
         <button class="fchip" data-q="去年">去年</button>
       </div>
+      <select id="sort" class="sort" aria-label="並び順" title="並び順">
+        <option value="relevance">関連度順</option>
+        <option value="newest">新しい順</option>
+        <option value="oldest">古い順</option>
+        <option value="name">名前順</option>
+        <option value="largest">大きい順</option>
+      </select>
     </div>
     <nav class="tabs" role="tablist">
       <button class="tab active" data-view="search" role="tab">検索</button>
@@ -47,7 +54,16 @@
     <!-- 検索 -->
     <section class="view active" id="view-search">
       <div class="split">
-        <div class="results" id="results" tabindex="-1"></div>
+        <div class="results-wrap">
+          <div class="results" id="results" tabindex="-1"></div>
+          <div class="selbar" id="selbar" hidden>
+            <span id="selcount"></span>
+            <button class="btn small" data-bulk="move">フォルダへ移動…</button>
+            <button class="btn small" data-bulk="copy">フォルダへコピー…</button>
+            <button class="btn small" data-bulk="paths">パスをコピー</button>
+            <button class="btn small" data-bulk="clear">選択を解除</button>
+          </div>
+        </div>
         <aside class="preview" id="preview"><div class="empty-note">ファイルを選ぶと中身をここに表示します</div></aside>
       </div>
     </section>
@@ -177,6 +193,12 @@
             <button id="root-add" class="btn">場所を追加…</button>
             <span class="hint">OneDrive・NAS・外付けドライブ（例: D:\）も追加できます</span>
           </div>
+          <div class="row">
+            <span>NAS・外付けドライブを</span>
+            <input id="rescan-minutes" type="number" min="0" max="1440" class="w-num" />
+            <span>分ごとに見直す</span>
+            <span class="hint">（変更の通知が届かないことがあるため。0 で見直さない）</span>
+          </div>
         </div>
 
         <div class="card">
@@ -218,6 +240,16 @@
             <span id="update-state" class="hint"></span>
           </div>
           <div class="hint">不具合を報告するときは、ログフォルダの <code>sagasu.log</code> を添付してもらえると原因を調べやすくなります。</div>
+          <div class="row"><button id="show-guide" class="btn">使い方の案内をもう一度見る</button></div>
+        </div>
+
+        <div class="card">
+          <div class="step-title">バックアップ</div>
+          <p class="hint">設定・自動整理ルール・ピン留めをファイルに書き出して、別のパソコンや入れ直したあとに読み込めます。検索用のデータは含みません（読み込んだあと自動で作り直します）。</p>
+          <div class="row">
+            <button id="backup-export" class="btn">書き出す…</button>
+            <button id="backup-import" class="btn">読み込む…</button>
+          </div>
         </div>
 
         <div class="actions sticky">
@@ -237,6 +269,17 @@
 
   <div id="menu" class="menu" hidden></div>
   <div id="toast" class="toast" hidden></div>
+  <div id="guide" class="modal" hidden>
+    <div class="modal-box guide-box">
+      <div class="guide-steps" id="guide-steps"></div>
+      <div class="guide-dots" id="guide-dots"></div>
+      <div class="actions">
+        <button id="guide-skip" class="btn">スキップ</button>
+        <button id="guide-back" class="btn">戻る</button>
+        <button id="guide-next" class="btn primary">次へ</button>
+      </div>
+    </div>
+  </div>
   <div id="modal" class="modal" hidden>
     <div class="modal-box">
       <div id="modal-text"></div>

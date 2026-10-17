@@ -52,6 +52,7 @@
 - **読みで探す**：「けいり」で「経理」、「みつもり」で「見積書」
 - 少しの打ち間違いも拾う **あいまい検索**
 - **絞り込みボタン** で種類と期間をワンタッチで選べる
+- **並べ替え**：関連度順・新しい順・古い順・名前順・大きい順
 - 空欄のとき、**最近の検索** から選び直せる
 - よく開くファイルほど上に表示
 
@@ -65,6 +66,7 @@
 - 画像は **サムネイル** でプレビュー
 - Shift_JIS の古いテキストにも対応
 - ファイルの追加・変更は自動で反映
+- NAS・外付けドライブは **定期的に見直し**（既定 30 分ごと）
 
 </td>
 </tr>
@@ -77,6 +79,7 @@
 - **自動整理ルール**：ダウンロードに来たファイルを、決めたフォルダへ自動で移動
 - **大きいファイル** の一覧から、不要なものをごみ箱へ
 - いつでも **元に戻せる** 履歴つき
+- **複数選択** して、まとめてフォルダへ移動・コピー
 
 </td>
 <td valign="top">
@@ -85,6 +88,8 @@
 - `Alt+Space` でどの画面からでも表示
 - タスクトレイに常駐、Windows 起動時の自動起動
 - ピン留め・あだ名で行きにくい場所へ直行
+- 結果を **ドラッグ＆ドロップ** で、エクスプローラーやメールへ
+- 初回起動の **使い方の案内**、設定の **バックアップ**
 - 重複ファイルを見つけて、ごみ箱へ
 - 新しいバージョンがあれば、画面下のボタンから **自動アップデート**
 
@@ -203,10 +208,45 @@
 | `Enter` | 開く |
 | `Ctrl+Enter` | 保存場所をエクスプローラーで開く |
 | `Ctrl+Shift+C` | パスをコピー |
+| `Shift+↑` `Shift+↓` | 選択を広げる |
+| `Ctrl+Shift+A` | 結果をすべて選択 |
+| `Ctrl+クリック` / `Shift+クリック` | 複数選択 |
 | `Ctrl+1`〜`5` | 検索 / 整理 / ピン留め / 履歴 / 設定 |
 | `Esc` | 入力を消す・ウィンドウを隠す |
 
 結果を **右クリック** すると「ピン留めに追加」「このフォルダを整理」などのメニューが出ます。
+
+### 8. 並べ替える
+
+期間ボタンの段の右端にあるプルダウンで、結果の並び順を選べます。
+
+| 並び順 | |
+| --- | --- |
+| 関連度順 | 既定 |
+| 新しい順 / 古い順 | 更新日で並べます |
+| 名前順 | |
+| 大きい順 | |
+
+- 名前の結果にも、中身の結果にも使えます
+- 選んだ並び順は、このパソコンに記憶されます
+
+### 9. 複数のファイルをまとめて扱う
+
+- **Ctrl+クリック** で 1 件ずつ選択・解除、**Shift+クリック** でまとめて範囲選択できます
+- 検索欄にいるときは **Shift+↑ / ↓** で選択を広げられます。**Ctrl+Shift+A** で結果をすべて選択します
+- 2 件以上選ぶと、結果一覧の下にバーが出ます。「N件を選択中」と表示され、「フォルダへ移動…」「フォルダへコピー…」「パスをコピー」「選択を解除」が使えます
+- 移動・コピーは、移動先のフォルダを選んで、確認してから実行されます。同じ名前のファイルは上書きせず、`名前 (2).docx` のように名前を変えます
+- 移動は「履歴」に「N件をまとめて移動」として残り、元に戻せます
+- フォルダの移動は同じドライブの中だけです。フォルダをコピーすると、中身もコピーされます。システムやアプリのフォルダは移動できません
+
+> [!TIP]
+> 結果（または選択した複数の項目）を、Sagasu の外へ **ドラッグ＆ドロップ** することもできます。エクスプローラー、デスクトップ、メールやチャットのアプリにそのまま落とせます。エクスプローラーから動かしたときと同じ動きで、フォルダに落とすとそこへコピーされます。
+
+### 10. 初回の案内と設定のバックアップ
+
+- 初めて起動すると、3 ページの案内が表示されます（「Sagasu へようこそ」「探し方のコツ」「片付けも安全に」）。「スキップ」でいつでも閉じられます。もう一度見たいときは、「設定」→「アップデートとサポート」→「使い方の案内をもう一度見る」を押します
+- 別のパソコンに設定を移したいときは、「設定」→「バックアップ」で書き出し・読み込みができます（[よくある質問](#-よくある質問)を参照）
+- NAS や外付けドライブは変更の通知が届きにくいため、Sagasu が一定の時間ごとに一覧を作り直します（「設定」→「検索する場所」で変更できます）
 
 <br>
 
@@ -311,6 +351,25 @@
 </details>
 
 <details>
+<summary><b>別のパソコンに設定を移したい</b></summary>
+
+「設定」→「バックアップ」の **「書き出す…」** で、設定・自動整理ルール・ピン留めを JSON ファイル（既定の名前は `sagasu-backup-YYYYMMDD.json`）に保存できます。新しいパソコンの Sagasu で **「読み込む…」** を押してそのファイルを選ぶと、確認のあとで反映されます。
+
+- 設定と自動整理ルールは置き換わり、ピン留めは追加されます（同じあだ名のものは上書きされます）
+- そのパソコンにない「検索する場所」や、ルールのフォルダは読み飛ばされます
+- 検索用の一覧（インデックス）はバックアップに含まれません。新しいパソコンで自動的に作り直されます
+
+</details>
+
+<details>
+<summary><b>NAS や外付けドライブの変更が反映されません</b></summary>
+
+ネットワーク上の共有フォルダ（`\\サーバー名\共有名` やネットワークドライブ）や外付けドライブは、変更の通知が届かないことがよくあります。そのため Sagasu は、一定の時間ごとに一覧を作り直しています。
+「設定」→「検索する場所」の「NAS・外付けドライブを [30] 分ごとに見直す」で間隔を変えられます（0 でオフ。既定は 30）。検索する場所にそのような場所が入っているときだけ働きます。
+
+</details>
+
+<details>
 <summary><b>不具合を報告したい</b></summary>
 
 「設定」→「アップデートとサポート」→「ログフォルダを開く」を押し、`sagasu.log` を報告に添付してください。
@@ -371,10 +430,15 @@ cargo test
 
 - **Instant name search** across your folders (~100k files in tens of milliseconds), tolerant of hiragana/katakana, full/half width, romaji and small typos.
 - **Reading search**: type hiragana or romaji to find kanji names (e.g. `けいり` → 経理). Uses the Japanese IME built into Windows; readings are prepared in the background after the first scan.
-- **Filter buttons** for file type and period, usable with or without typed words. **Recent searches** are shown when the box is empty.
+- **Filter buttons** for file type and period, usable with or without typed words. **Recent searches** are shown when the box is empty. A **sort** dropdown (relevance / newest / oldest / name / largest) is remembered on your PC.
 - **Full-text search** inside Word, Excel, PowerPoint, PDF and text files, with highlighted previews. **Text in images** (screenshots, scans) is recognized with the OCR built into Windows, offline, and is searchable too. Images show a thumbnail in the preview.
 - **Safe organizing**: presets (by type, year/month, year, extension); every plan is previewed first, nothing is ever deleted, collisions are renamed, and every run can be undone.
 - **Auto-organize rules**: when a matching file lands in a watched folder and stops changing for 5 seconds, it is moved to the destination. Downloads in progress and hidden files are skipped; every automatic move appears in History and can be undone.
+- **Multi-select and bulk actions**: Ctrl+click toggles items, Shift+click selects a range, Shift+Up/Down extends the selection, Ctrl+Shift+A selects all results. With 2+ items selected, a bar lets you move or copy them to a folder, or copy their paths. Same names are never overwritten, and moves can be undone from History. Folders can be moved only within the same drive.
+- **Drag and drop**: drag a result (or the selection) out of Sagasu onto Explorer, the desktop, or a mail/chat app, just like dragging from Explorer.
+- **NAS and removable drives**: network shares and removable drives often don't send change notifications, so Sagasu rebuilds their list on a timer (default every 30 minutes; 0 = off; Settings → Search locations).
+- **Backup**: Settings → Backup exports settings, auto-organize rules and pins to a JSON file and imports them on another PC. The search index is not included and is rebuilt automatically.
+- **First-run guide**: a 3-page guide appears on first launch. Show it again from Settings → Updates & Support.
 - **Large files**: lists the 100 largest files, with buttons to show the location or move a file to the Recycle Bin.
 - **Hotkey** `Alt+Space`, tray icon, pins/aliases, duplicate finder (moves copies to the Recycle Bin).
 - **Auto-update**: checks GitHub Releases at startup and installs signed updates with one click. Can be turned off in Settings.

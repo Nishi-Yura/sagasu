@@ -54,7 +54,7 @@ fn now() -> i64 {
 }
 
 #[tauri::command]
-pub async fn search(engine: Eng<'_>, query: String, limit: Option<usize>) -> Res<SearchResult> {
+pub async fn search(engine: Eng<'_>, query: String, limit: Option<usize>, sort: Option<crate::index::SortBy>) -> Res<SearchResult> {
     let t = std::time::Instant::now();
     let f = query::parse(&query);
     let q = normalize(query.trim());
@@ -77,7 +77,7 @@ pub async fn search(engine: Eng<'_>, query: String, limit: Option<usize>) -> Res
         return Ok(SearchResult { pins, items: vec![], total: 0, took_ms: 0, has_terms: false });
     }
     let opens = engine.opens.read().clone();
-    let (items, total) = engine.index.read().search(&f, limit.unwrap_or(150), &opens, now());
+    let (items, total) = engine.index.read().search_sorted(&f, limit.unwrap_or(150), &opens, now(), sort.unwrap_or_default());
     Ok(SearchResult { pins, items, total, took_ms: t.elapsed().as_millis() as u64, has_terms: f.has_terms() })
 }
 
@@ -363,6 +363,95 @@ pub async fn rule_run(engine: Eng<'_>, rule: crate::rules::Rule) -> Res<ApplyRes
         Ok(ApplyResult { history_id, moved: done.len(), errors })
     })
     .await
+}
+
+// ---------------- bulk move / copy ----------------
+
+/// Moves (`copy` = false) or copies the selected files and folders into `dest`.
+/// Moves are recorded in the history so they can be undone.
+#[tauri::command]
+pub async fn transfer(engine: Eng<'_>, paths: Vec<String>, dest: String, copy: bool) -> Res<ApplyResult> {
+    let engine = engine.inner().clone();
+    blocking(move || {
+        let (done, errors) = organize::transfer(&paths, Path::new(&dest), copy)?;
+        let history_id = if !copy && !done.is_empty() {
+            Some(engine.db.add_history(&dest, &format!("{}件をまとめて移動", done.len()), &done)?)
+        } else {
+            None
+        };
+        Ok(ApplyResult { history_id, moved: done.len(), errors })
+    })
+    .await
+}
+
+// ---------------- drag out ----------------
+
+/// Starts a native drag of the given files, so they can be dropped on Explorer, mail or chat apps.
+#[tauri::command]
+pub fn start_drag(app: AppHandle, paths: Vec<String>) -> Res<()> {
+    let files: Vec<PathBuf> = paths.iter().map(PathBuf::from).filter(|p| p.exists()).collect();
+    if files.is_empty() {
+        return Err("ファイルが見つかりません".into());
+    }
+    let window = app.get_webview_window("main").ok_or("window not found")?;
+    let w = window.clone();
+    let n = files.len();
+    // DoDragDrop must run on the UI thread.
+    app.run_on_main_thread(move || {
+        let icon = drag::Image::Raw(include_bytes!("../icons/32x32.png").to_vec());
+        let done = move |r: drag::DragResult, _| log::info!("drag of {n} file(s): {r:?}");
+        if let Err(e) = drag::start_drag(&w, drag::DragItem::Files(files), icon, done, drag::Options::default()) {
+            log::warn!("drag failed: {e}");
+        }
+    })
+    .map_err(err)
+}
+
+// ---------------- backup ----------------
+
+#[derive(Serialize, serde::Deserialize)]
+pub struct Backup {
+    pub app: String,
+    pub version: String,
+    pub exported: i64,
+    pub settings: Settings,
+    pub pins: Vec<Pin>,
+}
+
+/// Writes settings, rules and pins to a JSON file the user chose.
+#[tauri::command]
+pub fn export_backup(app: AppHandle, engine: Eng<'_>, path: String) -> Res<()> {
+    let b = Backup {
+        app: "Sagasu".into(),
+        version: app.package_info().version.to_string(),
+        exported: now(),
+        settings: engine.settings.read().clone(),
+        pins: engine.db.pins().map_err(err)?,
+    };
+    std::fs::write(&path, serde_json::to_string_pretty(&b).map_err(err)?).map_err(|e| format!("書き出せませんでした: {e}"))
+}
+
+/// Reads a backup: settings and rules are replaced, pins are added (same name = overwritten).
+#[tauri::command]
+pub fn import_backup(app: AppHandle, engine: Eng<'_>, path: String) -> Res<usize> {
+    let text = std::fs::read_to_string(&path).map_err(|e| format!("読み込めませんでした: {e}"))?;
+    let b: Backup = serde_json::from_str(text.trim_start_matches('\u{feff}')).map_err(|_| "Sagasu のバックアップファイルではありません".to_string())?;
+    if b.app != "Sagasu" {
+        return Err("Sagasu のバックアップファイルではありません".into());
+    }
+    let mut settings = b.settings;
+    // Folders that do not exist on this PC are dropped instead of failing the whole import.
+    settings.roots.retain(|r| Path::new(r).exists());
+    if settings.roots.is_empty() {
+        settings.roots = engine.settings.read().roots.clone();
+    }
+    settings.rules.retain(|r| Path::new(&r.folder).exists());
+    settings.onboarded = true;
+    save_settings(app, engine.clone(), settings)?;
+    for p in &b.pins {
+        engine.db.add_pin(&p.alias, &p.path).map_err(err)?;
+    }
+    Ok(b.pins.len())
 }
 
 // ---------------- updates ----------------

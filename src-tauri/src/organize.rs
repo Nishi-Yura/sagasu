@@ -336,6 +336,74 @@ pub fn undo(moves: &[MoveRecord]) -> (usize, Vec<String>) {
     (ok, errors)
 }
 
+/// System and app folders: selected files there are never moved.
+fn is_protected(path: &Path) -> bool {
+    let l = path.to_string_lossy().to_lowercase();
+    ["\\windows\\", "\\program files", "\\programdata\\", "\\$recycle.bin"].iter().any(|b| l.contains(b))
+        || (!cfg!(test) && l.contains("\\appdata\\"))
+}
+
+fn copy_recursive(from: &Path, to: &Path) -> std::io::Result<()> {
+    if from.is_dir() {
+        std::fs::create_dir_all(to)?;
+        for e in std::fs::read_dir(from)?.flatten() {
+            copy_recursive(&e.path(), &to.join(e.file_name()))?;
+        }
+        Ok(())
+    } else {
+        std::fs::copy(from, to).map(|_| ())
+    }
+}
+
+/// Moves (`copy` = false) or copies files and folders into `dest_dir`. Existing names get " (2)" etc.,
+/// so nothing is overwritten. Returns what was done (absolute paths) and per-item errors.
+pub fn transfer(paths: &[String], dest_dir: &Path, copy: bool) -> Result<(Vec<MoveRecord>, Vec<String>)> {
+    if !dest_dir.is_dir() {
+        bail!("移動先のフォルダが見つかりません: {}", dest_dir.display());
+    }
+    if !copy && is_protected(&dest_dir.join("x")) {
+        bail!("システムやアプリのフォルダには移動できません");
+    }
+    let mut done = Vec::new();
+    let mut errors = Vec::new();
+    let mut taken = HashSet::new();
+    for p in paths {
+        let from = PathBuf::from(p);
+        let Some(name) = from.file_name().map(PathBuf::from) else { continue };
+        if !from.exists() {
+            errors.push(format!("見つかりません: {p}"));
+            continue;
+        }
+        if from.parent().is_some_and(|parent| parent == dest_dir) {
+            errors.push(format!("すでにそのフォルダにあります: {p}"));
+            continue;
+        }
+        if dest_dir.starts_with(&from) {
+            errors.push(format!("フォルダをその中へは移動できません: {p}"));
+            continue;
+        }
+        if !copy && is_protected(&from) {
+            errors.push(format!("システムやアプリのファイルは移動できません: {p}"));
+            continue;
+        }
+        let rel = unique_target(dest_dir, &name, &taken);
+        taken.insert(rel.to_string_lossy().to_lowercase());
+        let target = dest_dir.join(rel);
+        let r = if copy {
+            copy_recursive(&from, &target).map_err(anyhow::Error::from)
+        } else if from.is_dir() {
+            std::fs::rename(&from, &target).map_err(|e| anyhow::anyhow!("フォルダは同じドライブの中でだけ移動できます（{e}）"))
+        } else {
+            crate::rules::move_file(&from, &target)
+        };
+        match r {
+            Ok(()) => done.push(MoveRecord { from: p.clone(), to: target.to_string_lossy().into_owned() }),
+            Err(e) => errors.push(format!("{p}: {e}")),
+        }
+    }
+    Ok((done, errors))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -394,6 +462,42 @@ mod tests {
         assert_eq!(v.moves.len(), 1);
         assert_eq!(v.moves[0].to, "pics\\b.PNG");
         assert_eq!(v.notes.len(), 4);
+    }
+
+    #[test]
+    fn transfer_move_copy_and_guards() {
+        let d = tempfile::tempdir().unwrap();
+        let src = d.path().join("src");
+        let dst = d.path().join("dst");
+        std::fs::create_dir_all(src.join("folder")).unwrap();
+        std::fs::create_dir_all(&dst).unwrap();
+        std::fs::write(src.join("a.txt"), "new").unwrap();
+        std::fs::write(src.join("folder").join("in.txt"), "x").unwrap();
+        std::fs::write(dst.join("a.txt"), "old").unwrap();
+        let s = |p: &Path| p.to_string_lossy().into_owned();
+
+        // copy keeps the originals and never overwrites
+        let (done, errs) = transfer(&[s(&src.join("a.txt")), s(&src.join("folder"))], &dst, true).unwrap();
+        assert!(errs.is_empty(), "{errs:?}");
+        assert_eq!(done.len(), 2);
+        assert_eq!(std::fs::read_to_string(dst.join("a.txt")).unwrap(), "old");
+        assert_eq!(std::fs::read_to_string(dst.join("a (2).txt")).unwrap(), "new");
+        assert!(dst.join("folder").join("in.txt").exists() && src.join("a.txt").exists());
+
+        // move a file and a folder (the folder name now collides → renamed), then undo
+        let (done, errs) = transfer(&[s(&src.join("a.txt")), s(&src.join("folder"))], &dst, false).unwrap();
+        assert!(errs.is_empty(), "{errs:?}");
+        assert!(!src.join("a.txt").exists() && dst.join("a (3).txt").exists() && dst.join("folder (2)").exists());
+        let (ok, _) = undo(&done);
+        assert_eq!(ok, 2);
+        assert!(src.join("a.txt").exists() && src.join("folder").join("in.txt").exists());
+
+        // guards: same folder, folder into itself, missing destination
+        let (_, errs) = transfer(&[s(&dst.join("a.txt"))], &dst, false).unwrap();
+        assert_eq!(errs.len(), 1);
+        let (_, errs) = transfer(&[s(&src)], &src.join("folder"), false).unwrap();
+        assert_eq!(errs.len(), 1);
+        assert!(transfer(&[s(&src.join("a.txt"))], &d.path().join("nope"), false).is_err());
     }
 
     #[test]

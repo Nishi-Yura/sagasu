@@ -77,6 +77,18 @@ struct Entry {
     reading: Option<Box<str>>,
 }
 
+/// Order of name results. Relevance is the default; the others ignore the score.
+#[derive(Debug, Clone, Copy, Default, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SortBy {
+    #[default]
+    Relevance,
+    Newest,
+    Oldest,
+    Name,
+    Largest,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct Hit {
     pub path: String,
@@ -306,7 +318,12 @@ impl Index {
     }
 
     /// Returns (top hits, total number of matches).
+    #[cfg(test)]
     pub fn search(&self, f: &Filter, limit: usize, opens: &HashMap<String, u32>, now: i64) -> (Vec<Hit>, usize) {
+        self.search_sorted(f, limit, opens, now, SortBy::Relevance)
+    }
+
+    pub fn search_sorted(&self, f: &Filter, limit: usize, opens: &HashMap<String, u32>, now: i64, sort: SortBy) -> (Vec<Hit>, usize) {
         let query_joined: String = f.terms.iter().filter_map(|t| t.first()).cloned().collect::<Vec<_>>().join(" ");
         let mut matches: Vec<(u32, i32, i64)> = self
             .entries
@@ -355,7 +372,13 @@ impl Index {
                 }
             }
         }
-        matches.par_sort_unstable_by(|a, b| b.1.cmp(&a.1).then(b.2.cmp(&a.2)));
+        match sort {
+            SortBy::Relevance => matches.par_sort_unstable_by(|a, b| b.1.cmp(&a.1).then(b.2.cmp(&a.2))),
+            SortBy::Newest => matches.par_sort_unstable_by(|a, b| b.2.cmp(&a.2)),
+            SortBy::Oldest => matches.par_sort_unstable_by(|a, b| a.2.cmp(&b.2)),
+            SortBy::Name => matches.par_sort_by(|a, b| self.entries[a.0 as usize].name_norm.cmp(&self.entries[b.0 as usize].name_norm)),
+            SortBy::Largest => matches.par_sort_unstable_by(|a, b| self.entries[b.0 as usize].size.cmp(&self.entries[a.0 as usize].size)),
+        }
         let hits = matches.iter().take(limit).map(|&(i, s, _)| self.hit(i as usize, s)).collect();
         (hits, total)
     }
@@ -592,6 +615,18 @@ mod tests {
         let (h, _) = ix.search(&parse("mitsumori"), 10, &HashMap::new(), 0);
         assert!(h.iter().any(|x| x.name == "見積書_A社.xlsx"), "romaji -> kana -> reading: {h:?}");
         assert!(ix.names_needing_reading().is_empty());
+    }
+
+    #[test]
+    fn sort_orders() {
+        let mut ix = sample();
+        ix.upsert("C:\\Users\\a\\Documents\\report_big.pdf", &FileMeta { size: 9_999, mtime: 5_000, is_dir: false, cloud: false, hidden: false });
+        let (h, _) = ix.search_sorted(&parse("report"), 10, &HashMap::new(), 0, SortBy::Largest);
+        assert_eq!(h[0].name, "report_big.pdf");
+        let (h, _) = ix.search_sorted(&parse("report"), 10, &HashMap::new(), 0, SortBy::Newest);
+        assert_eq!(h[0].name, "report_big.pdf");
+        let (h, _) = ix.search_sorted(&parse("report"), 10, &HashMap::new(), 0, SortBy::Name);
+        assert_eq!(h[0].name, "report_2025.pdf");
     }
 
     #[test]
